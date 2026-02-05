@@ -1,3 +1,10 @@
+# 1.0.0 (2026-02-05)
+
+
+### Features
+
+* Initial implementation of ConnectWise Automate TypeScript client ([2cfd4a3](https://github.com/asachs01/node-connectwise-automate/commit/2cfd4a37e109ece6f960a78d4d872c93831edc95))
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
