@@ -1,11 +1,11 @@
-# @asachs01/node-connectwise-automate
+# @wyre-technology/node-connectwise-automate
 
 Comprehensive, fully-typed Node.js/TypeScript library for the ConnectWise Automate API.
 
 ## Installation
 
 ```bash
-npm install @asachs01/node-connectwise-automate
+npm install @wyre-technology/node-connectwise-automate
 ```
 
 ## Authentication
@@ -15,7 +15,7 @@ ConnectWise Automate supports two authentication methods:
 ### Integrator Authentication (Recommended)
 
 ```typescript
-import { ConnectWiseAutomateClient } from '@asachs01/node-connectwise-automate';
+import { ConnectWiseAutomateClient } from '@wyre-technology/node-connectwise-automate';
 
 const client = new ConnectWiseAutomateClient({
   serverUrl: 'https://your-server.hostedrmm.com',
@@ -245,7 +245,7 @@ import {
   ConnectWiseAutomateValidationError,
   ConnectWiseAutomateRateLimitError,
   ConnectWiseAutomateServerError,
-} from '@asachs01/node-connectwise-automate';
+} from '@wyre-technology/node-connectwise-automate';
 
 try {
   const computer = await client.computers.get(999);
@@ -274,7 +274,7 @@ import type {
   Script,
   Patch,
   Group,
-} from '@asachs01/node-connectwise-automate';
+} from '@wyre-technology/node-connectwise-automate';
 
 const computer: Computer = await client.computers.get(123);
 // TypeScript knows all available properties
