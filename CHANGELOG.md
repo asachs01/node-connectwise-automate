@@ -1,3 +1,12 @@
+## [1.0.1](https://github.com/wyre-technology/node-connectwise-automate/compare/v1.0.0...v1.0.1) (2026-02-18)
+
+
+### Bug Fixes
+
+* require Node 22+ (semantic-release@25 compatibility) ([bf8a83c](https://github.com/wyre-technology/node-connectwise-automate/commit/bf8a83c5d886498bf4a5c3e885a51352b8773ed6))
+* require Node 22+ (semantic-release@25 compatibility) ([515a216](https://github.com/wyre-technology/node-connectwise-automate/commit/515a216d131b7ab5d33063531c289b2fd8f24c27))
+* trigger initial npm package publish ([228f8c1](https://github.com/wyre-technology/node-connectwise-automate/commit/228f8c120668e310b6841a94c75a2669b199c22e))
+
 # 1.0.0 (2026-02-05)
 
 
