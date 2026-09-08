@@ -9,8 +9,6 @@ import type {
   Computer,
   ComputerListParams,
   ComputerListResponse,
-  ComputerCreateData,
-  ComputerUpdateData,
   ComputerCommandRequest,
   ComputerCommandExecution,
   CommandHistoryEntry,
@@ -19,11 +17,22 @@ import type {
   CommandRunResult,
 } from '../types/computers.js';
 import type { BaseListParams } from '../types/common.js';
-import { buildBaseListParams } from '../params.js';
+import { buildBaseListParams, type QueryParams } from '../params.js';
 
 /** Resolve after `ms` milliseconds. */
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Statuses after which Automate no longer updates a CommandExecute row.
+ * `Success` and `Failed` are the documented outcomes; `Terminated` is what the
+ * server reports when the agent could not run the command at all.
+ */
+const TERMINAL_COMMAND_STATUSES = new Set(['success', 'failed', 'terminated']);
+
+function isTerminalCommandStatus(status: string | undefined): boolean {
+  return status !== undefined && TERMINAL_COMMAND_STATUSES.has(status.toLowerCase());
 }
 
 /**
@@ -64,39 +73,11 @@ export class ComputersResource {
   }
 
   /**
-   * Create a new computer
-   */
-  async create(data: ComputerCreateData): Promise<Computer> {
-    return this.httpClient.request<Computer>('/Computers', {
-      method: 'POST',
-      body: data,
-    });
-  }
-
-  /**
-   * Update an existing computer
-   */
-  async update(id: number, data: ComputerUpdateData): Promise<Computer> {
-    return this.httpClient.request<Computer>(`/Computers/${id}`, {
-      method: 'PATCH',
-      body: data,
-    });
-  }
-
-  /**
-   * Delete a computer
-   */
-  async delete(id: number): Promise<void> {
-    await this.httpClient.request<void>(`/Computers/${id}`, {
-      method: 'DELETE',
-    });
-  }
-
-  /**
    * Issue a catalog command to a computer.
    *
    * `command.Command.Id` must be an id from the command catalog (`commands()`);
-   * Automate does not accept free-text commands here.
+   * Automate does not accept free-text commands here. The call returns as soon
+   * as the command is queued — see `executeCommandAndWait` for the outcome.
    */
   async executeCommand(
     id: number,
@@ -112,19 +93,23 @@ export class ComputersResource {
   }
 
   /**
-   * List commands currently queued or executing on a computer
+   * Read command execution rows for a computer.
+   *
+   * Pass `ids` to fetch specific executions — this is how a queued command's
+   * `Status` and `Output` are read back once the agent has acted.
    */
-  async commandExecutions(id: number): Promise<ComputerCommandExecution[]> {
+  async commandExecutions(
+    id: number,
+    params?: BaseListParams
+  ): Promise<ComputerCommandExecution[]> {
     return this.httpClient.request<ComputerCommandExecution[]>(
-      `/Computers/${id}/CommandExecute`
+      `/Computers/${id}/CommandExecute`,
+      { params: buildBaseListParams(params) }
     );
   }
 
   /**
    * Get past command runs for a computer, including status and output.
-   *
-   * This is the only place a command's outcome is observable — the execute
-   * call itself returns before the agent has done anything.
    */
   async commandHistory(
     id: number,
@@ -137,15 +122,16 @@ export class ComputersResource {
   }
 
   /**
-   * Issue a command and poll command history until it finishes.
+   * Issue a command and wait for its outcome.
    *
-   * Like scripts, commands are asynchronous with no job handle — the execute
-   * call returns before the agent has acted. Correlation is by row identity
-   * against a pre-launch baseline, so a previous run of the same command can
-   * never be mistaken for this one.
+   * The execute call returns before the agent has acted, but the row it
+   * returns is the result surface: `GET /Computers/{id}/CommandExecute` takes
+   * an `ids` filter, and that row's `Status` and `Output` fill in as the agent
+   * reports back. Polling is keyed on the returned `Id`, so no other run of
+   * the same command can be mistaken for this one.
    *
-   * Returns with `completed: false` if the timeout elapses; the command keeps
-   * running and can be picked up later via `commandHistory`.
+   * Resolves with `completed: false` if the timeout elapses; the command keeps
+   * running and its row can be re-read later via `commandExecutions`.
    */
   async executeCommandAndWait(
     id: number,
@@ -155,37 +141,26 @@ export class ComputersResource {
     const timeoutMs = options.timeoutMs ?? 120_000;
     const pollIntervalMs = options.pollIntervalMs ?? 3_000;
 
-    const seenIds = new Set(
-      (await this.commandHistory(id)).map((entry) => entry.Id)
-    );
-
-    const execution = await this.executeCommand(id, command);
-
+    let execution = await this.executeCommand(id, command);
+    const executionId = execution.Id;
     const startedAt = Date.now();
-    while (Date.now() - startedAt < timeoutMs) {
+
+    while (
+      executionId !== undefined &&
+      !isTerminalCommandStatus(execution.Status) &&
+      Date.now() - startedAt < timeoutMs
+    ) {
       await delay(pollIntervalMs);
 
-      const history = await this.commandHistory(id);
-      const match = history.find(
-        (entry) => !seenIds.has(entry.Id) && entry.DateFinished !== undefined
-      );
-
-      if (match) {
-        return {
-          completed: true,
-          execution,
-          history: match,
-          status: match.Status,
-          output: match.Output,
-          waitedMs: Date.now() - startedAt,
-        };
-      }
+      const rows = await this.commandExecutions(id, { ids: String(executionId) });
+      execution = rows.find((row) => row.Id === executionId) ?? execution;
     }
 
     return {
-      completed: false,
+      completed: isTerminalCommandStatus(execution.Status),
       execution,
       status: execution.Status,
+      output: execution.Output,
       waitedMs: Date.now() - startedAt,
     };
   }
@@ -207,63 +182,29 @@ export class ComputersResource {
   }
 
   /**
-   * Send a message to a computer (popup)
+   * Build query parameters from list params.
+   *
+   * `GET /Computers` has no client/location/online query parameters, so the
+   * convenience filters become clauses of the `condition` expression.
    */
-  async sendMessage(id: number, message: string, title?: string): Promise<void> {
-    await this.httpClient.request<void>(`/Computers/${id}/SendMessage`, {
-      method: 'POST',
-      body: { Message: message, Title: title },
-    });
-  }
-
-  /**
-   * Restart a computer
-   */
-  async restart(id: number, force?: boolean, delayMinutes?: number): Promise<void> {
-    await this.httpClient.request<void>(`/Computers/${id}/Restart`, {
-      method: 'POST',
-      body: { Force: force, DelayMinutes: delayMinutes },
-    });
-  }
-
-  /**
-   * Shutdown a computer
-   */
-  async shutdown(id: number, force?: boolean, delayMinutes?: number): Promise<void> {
-    await this.httpClient.request<void>(`/Computers/${id}/Shutdown`, {
-      method: 'POST',
-      body: { Force: force, DelayMinutes: delayMinutes },
-    });
-  }
-
-  /**
-   * Wake up a computer (Wake-on-LAN)
-   */
-  async wakeUp(id: number): Promise<void> {
-    await this.httpClient.request<void>(`/Computers/${id}/WakeUp`, {
-      method: 'POST',
-    });
-  }
-
-  /**
-   * Build query parameters from list params
-   */
-  private buildListParams(params?: ComputerListParams): Record<string, string | number | boolean | undefined> {
+  private buildListParams(params?: ComputerListParams): QueryParams {
     if (!params) return {};
 
-    const result: Record<string, string | number | boolean | undefined> = {};
+    const { clientId, locationId, isOnline, ...base } = params;
+    const query = buildBaseListParams(base);
 
-    if (params.pageSize !== undefined) result['pageSize'] = params.pageSize;
-    if (params.page !== undefined) result['page'] = params.page;
-    if (params.condition !== undefined) result['condition'] = params.condition;
-    if (params.includeFields !== undefined) result['includeFields'] = params.includeFields;
-    if (params.orderBy !== undefined) result['orderBy'] = params.orderBy;
-    if (params.expand !== undefined) result['expand'] = params.expand;
-    if (params.clientId !== undefined) result['clientId'] = params.clientId;
-    if (params.locationId !== undefined) result['locationId'] = params.locationId;
-    if (params.includeOffline !== undefined) result['includeOffline'] = params.includeOffline;
-    if (params.isOnline !== undefined) result['isOnline'] = params.isOnline;
+    const clauses: string[] = [];
+    if (base.condition) clauses.push(base.condition);
+    if (clientId !== undefined) clauses.push(`Client.Id = ${clientId}`);
+    if (locationId !== undefined) clauses.push(`Location.Id = ${locationId}`);
+    if (isOnline !== undefined) clauses.push(`Status = '${isOnline ? 'Online' : 'Offline'}'`);
 
-    return result;
+    if (clauses.length > 1) {
+      query['condition'] = clauses.map((clause) => `(${clause})`).join(' and ');
+    } else if (clauses.length === 1) {
+      query['condition'] = clauses[0];
+    }
+
+    return query;
   }
 }

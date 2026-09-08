@@ -1,11 +1,13 @@
 /**
  * Authentication management for ConnectWise Automate API
  *
- * ConnectWise Automate supports two authentication methods:
- * 1. Integrator authentication (username/password)
- * 2. User authentication (username/password with optional 2FA)
- *
- * Both methods return a JWT token that must be included in subsequent requests.
+ * Both credential types — an integrator account, or a user account with
+ * optional 2FA — are exchanged for a bearer token via
+ * `POST /cwa/api/v1/apitoken` (`TokenCredentials` -> `TokenResult` in the
+ * Automate OpenAPI spec). The token is cached and re-acquired with the stored
+ * credentials shortly before `ExpirationDate`, and again after a 401. (The
+ * API also offers `POST /apitoken/refresh`; re-authenticating is simpler and
+ * is what pyconnectwise does.)
  */
 
 import type { ResolvedConfig } from './config.js';
@@ -24,12 +26,19 @@ export interface TokenInfo {
 }
 
 /**
- * Authentication response from the API
+ * `Automate.Api.Domain.Contracts.Security.TokenResult`. When the account has
+ * 2FA enabled and no passcode was sent, the server answers 200 with an empty
+ * `AccessToken` and `IsTwoFactorRequired: true`.
  */
-interface AuthTokenResponse {
-  AccessToken: string;
-  TokenType: string;
-  ExpirationDate: string;
+interface TokenResult {
+  AccessToken?: string;
+  TokenType?: string;
+  ExpirationDate?: string;
+  AbsoluteExpirationDate?: string;
+  UserId?: string;
+  InternalUserName?: string;
+  IsTwoFactorRequired?: boolean;
+  IsInternalTwoFactorRequired?: boolean;
 }
 
 /**
@@ -130,6 +139,7 @@ export class AuthManager {
       const response = await fetch(tokenUrl, {
         method: 'POST',
         headers: {
+          'Accept': 'application/json',
           'Content-Type': 'application/json',
           'ClientId': this.config.clientId,
         },
@@ -145,15 +155,30 @@ export class AuthManager {
         );
       }
 
-      const data = (await response.json()) as AuthTokenResponse;
+      const data = (await response.json()) as TokenResult;
 
-      // Parse expiration date
-      const expiresAt = new Date(data.ExpirationDate).getTime();
+      if (!data.AccessToken) {
+        if (data.IsTwoFactorRequired) {
+          throw new ConnectWiseAutomateAuthenticationError(
+            'Two-factor passcode required: this account has 2FA enabled and no valid ' +
+              'TwoFactorPasscode was supplied (set credentials.twoFactorCode)',
+            response.status,
+            data
+          );
+        }
+        throw new ConnectWiseAutomateAuthenticationError(
+          'Failed to acquire token: response contained no AccessToken',
+          response.status,
+          data
+        );
+      }
 
       return {
         accessToken: data.AccessToken,
         tokenType: data.TokenType || 'Bearer',
-        expiresAt,
+        // Missing/unparseable date -> NaN -> never treated as near expiry;
+        // the 401 refresh path still covers an expired token.
+        expiresAt: new Date(data.ExpirationDate ?? '').getTime(),
       };
     } catch (error) {
       if (error instanceof ConnectWiseAutomateAuthenticationError) {
@@ -168,7 +193,7 @@ export class AuthManager {
   }
 
   /**
-   * Build the authentication request body based on credentials method
+   * Build the `TokenCredentials` request body based on credentials method
    */
   private buildAuthBody(): Record<string, string> {
     if (this.config.credentials.method === 'integrator') {
@@ -176,18 +201,19 @@ export class AuthManager {
         UserName: this.config.credentials.integratorUsername,
         Password: this.config.credentials.integratorPassword,
       };
-    } else {
-      const body: Record<string, string> = {
-        UserName: this.config.credentials.username,
-        Password: this.config.credentials.password,
-      };
-
-      if (this.config.credentials.twoFactorCode) {
-        body['TwoFactorPasscode'] = this.config.credentials.twoFactorCode;
-      }
-
-      return body;
     }
+
+    const body: Record<string, string> = {
+      UserName: this.config.credentials.username,
+      Password: this.config.credentials.password,
+    };
+
+    if (this.config.credentials.twoFactorCode) {
+      // Authenticator apps display the code with a space in the middle.
+      body['TwoFactorPasscode'] = this.config.credentials.twoFactorCode.replace(/\s/g, '');
+    }
+
+    return body;
   }
 
   /**

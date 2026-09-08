@@ -1,26 +1,30 @@
 /**
- * Patches resource operations
+ * Patch management resource operations
+ *
+ * Automate has no patch catalog API. ConnectWise's published OpenAPI spec
+ * (Patching.json, Computers.json) exposes the global PatchHistory log,
+ * per-computer Microsoft / third-party patch status and statistics, and the
+ * PatchActions family of fire-and-forget POSTs. Approval is policy-driven
+ * and read-only over REST. List routes return a bare JSON array.
  */
 
 import type { HttpClient } from '../http.js';
 import type { PaginatedIterable } from '../pagination.js';
 import { createPaginatedIterable } from '../pagination.js';
+import { buildBaseListParams } from '../params.js';
+import type { BaseListParams } from '../types/common.js';
 import type {
-  Patch,
-  PatchListParams,
-  PatchListResponse,
-  PatchApproveRequest,
-  PatchApproveResult,
-  ComputerPatch,
-  ComputerPatchListParams,
-  ComputerPatchListResponse,
-  PatchStatistics,
-  PatchInstallRequest,
-  PatchInstallResponse,
+  ComputerMicrosoftUpdate,
+  ComputerPatchingStats,
+  ComputerThirdPartyPatch,
+  PatchAction,
+  PatchActionArgs,
+  PatchHistory,
+  PatchHistoryListParams,
 } from '../types/patches.js';
 
 /**
- * Patches resource operations
+ * Patch management resource operations
  */
 export class PatchesResource {
   private readonly httpClient: HttpClient;
@@ -30,133 +34,100 @@ export class PatchesResource {
   }
 
   /**
-   * List patches with optional filtering
+   * List patch history. Narrow with `condition`, e.g. `ComputerId = 42`.
    */
-  async list(params?: PatchListParams): Promise<PatchListResponse> {
-    return this.httpClient.request<PatchListResponse>('/Patches', {
-      params: this.buildListParams(params),
+  async history(params?: PatchHistoryListParams): Promise<PatchHistory[]> {
+    return this.httpClient.request<PatchHistory[]>('/PatchHistory', {
+      params: buildBaseListParams(params),
     });
   }
 
   /**
-   * List all patches with automatic pagination
+   * List all patch history with automatic pagination
    */
-  listAll(params?: Omit<PatchListParams, 'pageSize' | 'page'>): PaginatedIterable<Patch> {
-    return createPaginatedIterable<Patch>(
+  historyAll(
+    params?: Omit<PatchHistoryListParams, 'pageSize' | 'page'>
+  ): PaginatedIterable<PatchHistory> {
+    return createPaginatedIterable<PatchHistory>(
       this.httpClient,
-      '/Patches',
-      this.buildListParams(params)
+      '/PatchHistory',
+      buildBaseListParams(params)
     );
   }
 
   /**
-   * Get a single patch by ID
+   * Microsoft updates and their install state on one computer
    */
-  async get(id: number): Promise<Patch> {
-    return this.httpClient.request<Patch>(`/Patches/${id}`);
-  }
-
-  /**
-   * Approve one or more patches
-   */
-  async approve(request: PatchApproveRequest): Promise<PatchApproveResult> {
-    return this.httpClient.request<PatchApproveResult>('/Patches/Approve', {
-      method: 'POST',
-      body: request,
-    });
-  }
-
-  /**
-   * Deny (unapprove) one or more patches
-   */
-  async deny(request: PatchApproveRequest): Promise<PatchApproveResult> {
-    return this.httpClient.request<PatchApproveResult>('/Patches/Deny', {
-      method: 'POST',
-      body: request,
-    });
-  }
-
-  /**
-   * Install patches on computers
-   */
-  async install(request: PatchInstallRequest): Promise<PatchInstallResponse> {
-    return this.httpClient.request<PatchInstallResponse>('/Patches/Install', {
-      method: 'POST',
-      body: request,
-    });
-  }
-
-  /**
-   * Get patch statistics
-   */
-  async statistics(): Promise<PatchStatistics> {
-    return this.httpClient.request<PatchStatistics>('/Patches/Statistics');
-  }
-
-  /**
-   * List computer patch status
-   */
-  async computerPatches(params?: ComputerPatchListParams): Promise<ComputerPatchListResponse> {
-    return this.httpClient.request<ComputerPatchListResponse>('/Patches/ComputerPatches', {
-      params: this.buildComputerPatchListParams(params),
-    });
-  }
-
-  /**
-   * List all computer patches with automatic pagination
-   */
-  computerPatchesAll(params?: Omit<ComputerPatchListParams, 'pageSize' | 'page'>): PaginatedIterable<ComputerPatch> {
-    return createPaginatedIterable<ComputerPatch>(
-      this.httpClient,
-      '/Patches/ComputerPatches',
-      this.buildComputerPatchListParams(params)
+  async microsoftUpdates(
+    computerId: number,
+    params?: BaseListParams
+  ): Promise<ComputerMicrosoftUpdate[]> {
+    return this.httpClient.request<ComputerMicrosoftUpdate[]>(
+      `/Computers/${computerId}/MicrosoftUpdates`,
+      { params: buildBaseListParams(params) }
     );
   }
 
   /**
-   * Build query parameters from list params
+   * Third-party patches and their install state on one computer
    */
-  private buildListParams(params?: PatchListParams): Record<string, string | number | boolean | undefined> {
-    if (!params) return {};
-
-    const result: Record<string, string | number | boolean | undefined> = {};
-
-    if (params.pageSize !== undefined) result['pageSize'] = params.pageSize;
-    if (params.page !== undefined) result['page'] = params.page;
-    if (params.condition !== undefined) result['condition'] = params.condition;
-    if (params.includeFields !== undefined) result['includeFields'] = params.includeFields;
-    if (params.orderBy !== undefined) result['orderBy'] = params.orderBy;
-    if (params.expand !== undefined) result['expand'] = params.expand;
-    if (params.isApproved !== undefined) result['isApproved'] = params.isApproved;
-    if (params.category !== undefined) result['category'] = params.category;
-    if (params.severity !== undefined) result['severity'] = params.severity;
-    if (params.product !== undefined) result['product'] = params.product;
-    if (params.title !== undefined) result['title'] = params.title;
-    if (params.releaseDateStart !== undefined) result['releaseDateStart'] = params.releaseDateStart;
-    if (params.releaseDateEnd !== undefined) result['releaseDateEnd'] = params.releaseDateEnd;
-
-    return result;
+  async thirdPartyPatches(
+    computerId: number,
+    params?: BaseListParams
+  ): Promise<ComputerThirdPartyPatch[]> {
+    return this.httpClient.request<ComputerThirdPartyPatch[]>(
+      `/Computers/${computerId}/ThirdPartyPatches`,
+      { params: buildBaseListParams(params) }
+    );
   }
 
   /**
-   * Build query parameters from computer patch list params
+   * Patch compliance statistics for one computer
    */
-  private buildComputerPatchListParams(params?: ComputerPatchListParams): Record<string, string | number | boolean | undefined> {
-    if (!params) return {};
+  async patchingStats(computerId: number): Promise<ComputerPatchingStats> {
+    return this.httpClient.request<ComputerPatchingStats>(
+      `/Computers/${computerId}/PatchingStats`
+    );
+  }
 
-    const result: Record<string, string | number | boolean | undefined> = {};
+  /** Deploy every approved patch to the target entity */
+  async deployAllApproved(target: PatchActionArgs): Promise<void> {
+    await this.patchAction('DeployAllApproved', target);
+  }
 
-    if (params.pageSize !== undefined) result['pageSize'] = params.pageSize;
-    if (params.page !== undefined) result['page'] = params.page;
-    if (params.condition !== undefined) result['condition'] = params.condition;
-    if (params.includeFields !== undefined) result['includeFields'] = params.includeFields;
-    if (params.orderBy !== undefined) result['orderBy'] = params.orderBy;
-    if (params.expand !== undefined) result['expand'] = params.expand;
-    if (params.computerId !== undefined) result['computerId'] = params.computerId;
-    if (params.patchId !== undefined) result['patchId'] = params.patchId;
-    if (params.status !== undefined) result['status'] = params.status;
-    if (params.clientId !== undefined) result['clientId'] = params.clientId;
+  /** Deploy every approved security patch to the target entity */
+  async deployAllSecurity(target: PatchActionArgs): Promise<void> {
+    await this.patchAction('DeployAllSecurity', target);
+  }
 
-    return result;
+  /** Retry patches that previously failed on the target entity */
+  async reattemptFailed(target: PatchActionArgs): Promise<void> {
+    await this.patchAction('ReattemptFailed', target);
+  }
+
+  /** Move the target entity to the Test approval stage */
+  async setToTestStage(target: PatchActionArgs): Promise<void> {
+    await this.patchAction('SetToTestStage', target);
+  }
+
+  /** Move the target entity to the Pilot approval stage */
+  async setToPilotStage(target: PatchActionArgs): Promise<void> {
+    await this.patchAction('SetToPilotStage', target);
+  }
+
+  /** Move the target entity to the Production approval stage */
+  async setToProductionStage(target: PatchActionArgs): Promise<void> {
+    await this.patchAction('SetToProductionStage', target);
+  }
+
+  /**
+   * POST /PatchActions/{action}. Automate answers 204 with no body; the
+   * action is queued, and its outcome is only observable through history.
+   */
+  private async patchAction(action: PatchAction, target: PatchActionArgs): Promise<void> {
+    await this.httpClient.request<void>(`/PatchActions/${action}`, {
+      method: 'POST',
+      body: target,
+    });
   }
 }

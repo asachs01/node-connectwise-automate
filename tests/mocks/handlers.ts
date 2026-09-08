@@ -45,32 +45,8 @@ export const handlers = [
     return HttpResponse.json(fixtures.computers.single);
   }),
 
-  http.post(`${API_BASE}/Computers`, () => {
-    return HttpResponse.json(fixtures.computers.created);
-  }),
-
-  http.patch(`${API_BASE}/Computers/:id`, () => {
-    return HttpResponse.json(fixtures.computers.updated);
-  }),
-
-  http.delete(`${API_BASE}/Computers/:id`, () => {
-    return HttpResponse.json({});
-  }),
-
   http.post(`${API_BASE}/Computers/:id/CommandExecute`, () => {
     return HttpResponse.json(fixtures.computers.commandResult);
-  }),
-
-  http.post(`${API_BASE}/Computers/:id/Restart`, () => {
-    return HttpResponse.json({});
-  }),
-
-  http.post(`${API_BASE}/Computers/:id/Shutdown`, () => {
-    return HttpResponse.json({});
-  }),
-
-  http.post(`${API_BASE}/Computers/:id/WakeUp`, () => {
-    return HttpResponse.json({});
   }),
 
   // Clients endpoints
