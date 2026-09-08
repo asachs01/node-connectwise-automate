@@ -1,3 +1,57 @@
+# [2.1.0](https://github.com/WYRE-AI/node-connectwise-automate/compare/v2.0.4...v2.1.0) (2026-09-04)
+
+
+### Features
+
+* **release:** extracted CHANGELOG notes + explicit-https git URLs ([#85](https://github.com/WYRE-AI/node-connectwise-automate/issues/85)) ([b774c1d](https://github.com/WYRE-AI/node-connectwise-automate/commit/b774c1dba6e3d69ab8fa2df54981494cee874273)), closes [node-datto-rmm#77](https://github.com/node-datto-rmm/issues/77) [#84](https://github.com/WYRE-AI/node-connectwise-automate/issues/84)
+
+
+## [2.0.4](https://github.com/WYRE-AI/node-connectwise-automate/compare/v2.0.3...v2.0.4) (2026-09-04)
+
+
+### Bug Fixes
+
+* **release:** use inline http.extraheader instead of git remote set-url ([#84](https://github.com/WYRE-AI/node-connectwise-automate/issues/84)) ([aa5c4e4](https://github.com/WYRE-AI/node-connectwise-automate/commit/aa5c4e43f3cf0a1180b10b9764aa1268e10e2998))
+* **security:** resolve dependabot alerts via npm audit fix ([#81](https://github.com/WYRE-AI/node-connectwise-automate/issues/81)) ([b50a7c9](https://github.com/WYRE-AI/node-connectwise-automate/commit/b50a7c90748c0bf045195bbb1f7f8752f9b7da8e))
+
+
+## [2.0.3](https://github.com/WYRE-AI/node-connectwise-automate/compare/v2.0.2...v2.0.3) (2026-08-28)
+
+
+### Bug Fixes
+
+* normalize bare-array list responses into { Data, TotalRecords } ([#78](https://github.com/WYRE-AI/node-connectwise-automate/issues/78)) ([c739317](https://github.com/WYRE-AI/node-connectwise-automate/commit/c73931741be29e517dac6536140ef13621108897)), closes [#38](https://github.com/WYRE-AI/node-connectwise-automate/issues/38)
+
+## [2.0.2](https://github.com/WYRE-AI/node-connectwise-automate/compare/v2.0.1...v2.0.2) (2026-08-26)
+
+
+### Bug Fixes
+
+* **ci:** stop daily-failing Dependabot security jobs for esbuild/undici ([#73](https://github.com/WYRE-AI/node-connectwise-automate/issues/73)) ([4e93542](https://github.com/WYRE-AI/node-connectwise-automate/commit/4e935422429a3d69e0f3c60038f65b98a910ab0a))
+
+## [2.0.1](https://github.com/WYRE-AI/node-connectwise-automate/compare/v2.0.0...v2.0.1) (2026-08-25)
+
+
+### Bug Fixes
+
+* migrate to WYRE-AI org (npm scope, ghcr namespace, registry) ([#76](https://github.com/WYRE-AI/node-connectwise-automate/issues/76)) ([413dd3d](https://github.com/WYRE-AI/node-connectwise-automate/commit/413dd3d753b0ec6a4e1d02fa4f0c5cfda5bf23a7))
+
+# [2.0.0](https://github.com/wyre-technology/node-connectwise-automate/compare/v1.0.5...v2.0.0) (2026-08-14)
+
+
+* fix!: replace fabricated script/command routes with the real Automate API ([#72](https://github.com/wyre-technology/node-connectwise-automate/issues/72)) ([d6134df](https://github.com/wyre-technology/node-connectwise-automate/commit/d6134df0af7743206c8034e4d15b0b05cf8409a3))
+
+
+### BREAKING CHANGES
+
+* ScriptsResource.execute, executions, executionsAll and
+getExecution are removed; Automate has no such endpoints. Use executeBatch or
+runAndWait, and read results via historyForComputer. runAndWait takes a
+computer-id array and returns one result per computer.
+ComputersResource.executeCommand now takes { Command: { Id }, Parameters?:
+string[] } and returns ComputerCommandExecution instead of CommandResult.
+BaseListParams.select is renamed to includeFields.
+
 ## [1.0.5](https://github.com/wyre-technology/node-connectwise-automate/compare/v1.0.4...v1.0.5) (2026-08-06)
 
 
