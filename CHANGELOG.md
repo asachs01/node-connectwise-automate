@@ -1,3 +1,23 @@
+# [3.0.0](https://github.com/WYRE-AI/node-connectwise-automate/compare/v2.1.0...v3.0.0) (2026-09-09)
+
+
+* fix!: align every resource with the Automate OpenAPI spec and reference clients ([#88](https://github.com/WYRE-AI/node-connectwise-automate/issues/88)) ([912e81e](https://github.com/WYRE-AI/node-connectwise-automate/commit/912e81ee313324dbe1243e1f6be2ca601b156c7d))
+
+
+### BREAKING CHANGES
+
+* list() methods return T[]; removed ComputersResource
+create/update/delete/sendMessage/restart/shutdown/wakeUp, AlertsResource
+acknowledge/close/statistics, all previous PatchesResource methods and
+types, GroupsResource members/addMembers/removeMembers; Script.Id and
+ScriptFolder.Id are strings; scripts.get() returns the v2 ScriptDetail;
+Computer, Client, Location, Contact, Group and Alert fields now match the
+spec; ScriptListParams/ComputerListParams/AlertListParams lost their
+invented filters; CommandRunResult.history removed.
+
+Claude-Session: https://claude.ai/code/session_01GT7vFGg6QkB8AH5Vf4PzNq
+
+
 # [2.1.0](https://github.com/WYRE-AI/node-connectwise-automate/compare/v2.0.4...v2.1.0) (2026-09-04)
 
 
