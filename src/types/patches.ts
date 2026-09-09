@@ -1,187 +1,154 @@
 /**
  * Patch management types for ConnectWise Automate
+ *
+ * Mirrors the patching contracts in ConnectWise's published OpenAPI spec
+ * (Patching.json, Computers.json). Automate has no patch catalog entity;
+ * patch state is observed per computer and through the PatchHistory log,
+ * and patching is driven through the PatchActions routes.
  */
 
-import type { BaseEntity, BaseListParams } from './common.js';
+import type { BaseListParams } from './common.js';
 
-/**
- * Patch entity
- */
-export interface Patch extends BaseEntity {
-  /** Patch title */
-  Title: string;
-  /** Microsoft KB article ID */
-  KBArticle?: string;
-  /** Patch description */
-  Description?: string;
-  /** Bulletin ID */
-  BulletinId?: string;
-  /** Patch category */
-  Category?: string;
-  /** Product name */
-  Product?: string;
-  /** Severity */
-  Severity?: 'Critical' | 'Important' | 'Moderate' | 'Low' | 'Unspecified';
-  /** Release date */
-  ReleaseDate?: string;
-  /** Is approved */
-  IsApproved?: boolean;
-  /** Approved by */
-  ApprovedBy?: string;
-  /** Approval date */
-  ApprovalDate?: string;
-  /** Is superseded */
-  IsSuperseded?: boolean;
-  /** Superseded by patch ID */
-  SupersededBy?: number;
-  /** Download size in bytes */
-  DownloadSize?: number;
-  /** Download URL */
-  DownloadUrl?: string;
+/** Id/Name lookup value used throughout the patching contracts */
+export interface PatchLookup {
+  Id: number;
+  Name: string;
 }
 
 /**
- * Patch list parameters
+ * A PatchHistory row (`Automate.Api.Domain.Contracts.Patching.PatchHistory`)
  */
-export interface PatchListParams extends BaseListParams {
-  /** Filter by approval status */
-  isApproved?: boolean;
-  /** Filter by category */
-  category?: string;
-  /** Filter by severity */
-  severity?: 'Critical' | 'Important' | 'Moderate' | 'Low' | 'Unspecified';
-  /** Filter by product */
-  product?: string;
-  /** Search by title */
-  title?: string;
-  /** Filter by release date start */
-  releaseDateStart?: string;
-  /** Filter by release date end */
-  releaseDateEnd?: string;
-}
-
-/**
- * Patch list response
- */
-export interface PatchListResponse {
-  TotalRecords?: number;
-  Data: Patch[];
-}
-
-/**
- * Patch approval request
- */
-export interface PatchApproveRequest {
-  /** Patch IDs to approve */
-  PatchIds: number[];
-  /** Approval notes */
-  Notes?: string;
-}
-
-/**
- * Patch approval result
- */
-export interface PatchApproveResult {
-  /** Number of patches approved */
-  Count: number;
-  /** Approved patch IDs */
-  ApprovedPatchIds: number[];
-  /** Failed patch IDs */
-  FailedPatchIds?: number[];
-}
-
-/**
- * Computer patch status
- */
-export interface ComputerPatch extends BaseEntity {
-  /** Computer ID */
+export interface PatchHistory {
+  /** When the operation happened (ISO 8601) */
+  ActionDate?: string;
   ComputerId: number;
-  /** Computer name */
-  ComputerName?: string;
-  /** Patch ID */
-  PatchId: number;
-  /** Patch title */
-  PatchTitle?: string;
-  /** Installation status */
-  Status: 'Installed' | 'Missing' | 'Pending' | 'Failed' | 'Ignored';
-  /** Install date */
-  InstallDate?: string;
-  /** Last attempt date */
-  LastAttemptDate?: string;
-  /** Error message */
-  ErrorMessage?: string;
-}
-
-/**
- * Computer patch list parameters
- */
-export interface ComputerPatchListParams extends BaseListParams {
-  /** Filter by computer ID */
-  computerId?: number;
-  /** Filter by patch ID */
-  patchId?: number;
-  /** Filter by status */
-  status?: 'Installed' | 'Missing' | 'Pending' | 'Failed' | 'Ignored';
-  /** Filter by client ID */
-  clientId?: number;
-}
-
-/**
- * Computer patch list response
- */
-export interface ComputerPatchListResponse {
-  TotalRecords?: number;
-  Data: ComputerPatch[];
-}
-
-/**
- * Patch statistics
- */
-export interface PatchStatistics {
-  /** Total patches in system */
-  TotalPatches: number;
-  /** Approved patches */
-  ApprovedPatches: number;
-  /** Pending approval */
-  PendingApproval: number;
-  /** Total computers needing patches */
-  ComputersNeedingPatches: number;
-  /** By severity */
-  BySeverity: {
-    Critical: number;
-    Important: number;
-    Moderate: number;
-    Low: number;
-    Unspecified: number;
+  /** Windows Update operation, e.g. `Installation` */
+  OperationCode?: PatchLookup;
+  PatchHistoryClient?: PatchLookup;
+  PatchHistoryTitle?: {
+    Id: number;
+    Title: string;
+    KnowledgeBaseId: number;
   };
+  /** Windows Update result, e.g. `Succeeded` */
+  ResultCode?: PatchLookup;
+  /** Microsoft update GUID */
+  UpdateId?: string;
 }
 
 /**
- * Patch install request
+ * Patch history list parameters. Narrow with `condition`, e.g. `ComputerId = 42`.
  */
-export interface PatchInstallRequest {
-  /** Computer IDs */
-  ComputerIds: number[];
-  /** Patch IDs to install */
-  PatchIds: number[];
-  /** Force reboot after install */
-  ForceReboot?: boolean;
-  /** Delay in minutes before reboot */
-  RebootDelayMinutes?: number;
+export type PatchHistoryListParams = BaseListParams;
+
+/**
+ * A Microsoft update as seen on one computer
+ * (`LabTech.Models.ComputerMicrosoftUpdateData`)
+ */
+export interface ComputerMicrosoftUpdate {
+  Category?: string;
+  ComputerId: number;
+  InstallDate?: string;
+  /** e.g. `Installed`, `Missing`, `Failed` */
+  InstallState?: string;
+  IsCompliant?: boolean;
+  IsFailed?: boolean;
+  IsInstalled?: boolean;
+  IsNonCompliant?: boolean;
+  KnowledgeBaseId?: number;
+  /** Microsoft update GUID */
+  MicrosoftUpdateId?: string;
+  /** Approval state under the effective policy */
+  PolicyApproval?: PatchLookup;
+  ReleaseDate?: string;
+  /** Microsoft severity text, e.g. `Critical` */
+  Severity?: string;
+  Title?: string;
+  Cvss?: number;
 }
 
 /**
- * Patch install response
+ * A third-party patch as seen on one computer
+ * (`LabTech.Models.ComputerThirdPartyPatch`)
  */
-export interface PatchInstallResponse {
-  /** Job ID */
-  JobId: string;
-  /** Target computers */
-  ComputerIds: number[];
-  /** Target patches */
-  PatchIds: number[];
-  /** Status */
-  Status: 'Queued' | 'Running' | 'Completed' | 'Failed';
-  /** Message */
-  Message?: string;
+export interface ComputerThirdPartyPatch {
+  ApprovedVersion?: string;
+  AvailableVersion?: string;
+  ComplianceState?: PatchLookup;
+  ComputerId: number;
+  DisplayTitle?: string;
+  InstallAction?: PatchLookup;
+  InstallDate?: string;
+  InstallState?: string;
+  InstalledVersion?: string;
+  Is64Bit?: boolean;
+  IsCompliant?: boolean;
+  IsFailed?: boolean;
+  IsInstalled?: boolean;
+  IsNonCompliant?: boolean;
+  Manufacturer?: string;
+  /** Third-party patch GUID */
+  PatchId?: string;
+  PolicyApproval?: PatchLookup;
+  SoftwareId?: string;
+  Title?: string;
+}
+
+/**
+ * Patching statistics for one computer
+ * (`Automate.Api.Domain.Contracts.Patching.ComputerPatchingStats`)
+ */
+export interface ComputerPatchingStats {
+  ComputerId: number;
+  /** Overall compliance percentage */
+  OverallCompliance?: number;
+  InstalledPatchCount?: number;
+  MissingPatchCount?: number;
+  FailedPatchCount?: number;
+  CompliantSoftwareCount?: number;
+  NonCompliantSoftwareCount?: number;
+  FailedSoftwareCount?: number;
+  IncorrectSoftwareCount?: number;
+  /** Approval stage, e.g. `Test`, `Pilot`, `Production` */
+  Stage?: string;
+  NoPatchInventory?: boolean;
+  WSUSEnabled?: boolean;
+  PatchJobRunning?: boolean;
+  DaytimePatchingEnabled?: boolean;
+  WUAOutOfDate?: boolean;
+  MissingBaselinePatches?: boolean;
+  WUAVersion?: string;
+  LastInstallWindow?: string;
+  NextInstallWindow?: string;
+  LastSoftwareWindow?: string;
+  NextSoftwareWindow?: string;
+  LastPatchedDate?: string;
+  LastMicrosoftPatchedDate?: string;
+  LastThirdPartyPatchedDate?: string;
+  LastPatchInventory?: string;
+  IsMicrosoftManaged?: boolean;
+  IsThirdPartyManaged?: boolean;
+}
+
+/** The PatchActions routes Automate exposes (`POST /PatchActions/{action}`) */
+export type PatchAction =
+  | 'DeployAllApproved'
+  | 'DeployAllSecurity'
+  | 'ReattemptFailed'
+  | 'SetToTestStage'
+  | 'SetToPilotStage'
+  | 'SetToProductionStage';
+
+/**
+ * Target of a patch action (`LabTech.Models.PatchActionArgs`)
+ */
+export interface PatchActionArgs {
+  /**
+   * Automate entity-type ordinal. The spec types this as an integer with no
+   * enum; the Batch contracts list the same entity types as strings in the
+   * order System, Computer, Site, Company, ..., Group, so Computer is 1.
+   */
+  EntityType: number;
+  /** Id of the computer, location, client or group to act on */
+  EntityId: number;
 }

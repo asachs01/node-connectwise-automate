@@ -1,5 +1,10 @@
 /**
  * HTTP layer for the ConnectWise Automate API
+ *
+ * Requests go to `https://<host>/cwa/api/<version><path>` — the prefix that
+ * connectwise-rest, pyconnectwise and AutomateAPI.ps1 all use. Almost every
+ * route lives under v1; a few (Contacts, some Scripts routes) exist only
+ * under v2.
  */
 
 import type { ResolvedConfig } from './config.js';
@@ -15,19 +20,37 @@ import {
   ConnectWiseAutomateServerError,
 } from './errors.js';
 
+/** API version path segment */
+export type ApiVersion = 'v1' | 'v2';
+
+/** HTTP methods used by the API */
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
 /**
  * HTTP request options
  */
 export interface RequestOptions {
   /** HTTP method */
-  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  method?: HttpMethod;
   /** Request body (will be JSON stringified) */
   body?: unknown;
   /** URL query parameters */
   params?: Record<string, string | number | boolean | undefined>;
+  /** API version segment (default: 'v1') */
+  apiVersion?: ApiVersion;
   /** Skip authentication (for token endpoint) */
   skipAuth?: boolean;
 }
+
+/**
+ * Methods whose requests can safely be re-sent after a 5xx or a dropped
+ * connection (RFC 9110 §9.2.2). POST and PATCH are never retried: a script
+ * launch or command that did reach the server would otherwise run twice.
+ */
+const IDEMPOTENT_METHODS: ReadonlySet<string> = new Set(['GET', 'PUT', 'DELETE']);
+
+/** Pause before re-sending an idempotent request after a 5xx or transport failure */
+const SERVER_ERROR_RETRY_DELAY_MS = 1000;
 
 /**
  * HTTP client for making authenticated requests to the ConnectWise Automate API
@@ -47,10 +70,29 @@ export class HttpClient {
    * Make an authenticated request to the API
    */
   async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-    const { method = 'GET', body, params, skipAuth = false } = options;
+    const { method = 'GET', body, params, apiVersion = 'v1', skipAuth = false } = options;
+    const url = this.buildUrl(path, apiVersion, params);
+    return this.executeRequest<T>(url, method, body, skipAuth);
+  }
 
-    // Build the URL
-    let url = `${this.config.serverUrl}/cwa/api/v1${path}`;
+  /**
+   * Make a request to a full URL (for pagination)
+   */
+  async requestUrl<T>(url: string): Promise<T> {
+    return this.executeRequest<T>(url, 'GET', undefined, false);
+  }
+
+  /**
+   * Build the absolute URL for a resource path
+   */
+  private buildUrl(
+    path: string,
+    apiVersion: ApiVersion,
+    params: RequestOptions['params']
+  ): string {
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+    let url = `${this.config.serverUrl}/cwa/api/${apiVersion}${normalizedPath}`;
+
     if (params) {
       const searchParams = new URLSearchParams();
       for (const [key, value] of Object.entries(params)) {
@@ -64,14 +106,7 @@ export class HttpClient {
       }
     }
 
-    return this.executeRequest<T>(url, method, body, skipAuth);
-  }
-
-  /**
-   * Make a request to a full URL (for pagination)
-   */
-  async requestUrl<T>(url: string): Promise<T> {
-    return this.executeRequest<T>(url, 'GET', undefined, false);
+    return url;
   }
 
   /**
@@ -88,8 +123,8 @@ export class HttpClient {
     // Wait for a rate limit slot
     await this.rateLimiter.waitForSlot();
 
-    // Get the auth token
     const headers: Record<string, string> = {
+      'Accept': 'application/json',
       'Content-Type': 'application/json',
       'ClientId': this.config.clientId,
     };
@@ -102,14 +137,25 @@ export class HttpClient {
     // Record the request
     this.rateLimiter.recordRequest();
 
-    // Make the request
-    const response = await fetch(url, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method,
+        headers,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+      });
+    } catch (error) {
+      // No response at all: DNS failure, connection reset, or the socket
+      // closed mid-transfer (undici's `TypeError: terminated`). Re-send once
+      // for idempotent methods; otherwise surface the raw error untouched so
+      // callers can classify it themselves.
+      if (this.canRetry(method, retryCount)) {
+        await this.sleep(SERVER_ERROR_RETRY_DELAY_MS);
+        return this.executeRequest<T>(url, method, body, skipAuth, retryCount + 1, isRetryAfter401);
+      }
+      throw error;
+    }
 
-    // Handle the response
     return this.handleResponse<T>(response, url, method, body, skipAuth, retryCount, isRetryAfter401);
   }
 
@@ -160,28 +206,28 @@ export class HttpClient {
       );
     }
 
-    const responseBody: unknown = parsedBody;
+    const serverMessage = this.extractServerMessage(parsedBody);
+    const describe = (summary: string): string =>
+      serverMessage ? `${summary}: ${serverMessage}` : summary;
 
     switch (response.status) {
       case 400:
-        // Could be bad credentials on token request or validation error
-        if (this.isValidationError(responseBody)) {
-          const errors = this.parseValidationErrors(responseBody);
-          throw new ConnectWiseAutomateValidationError('Validation error', errors, responseBody);
-        }
-        throw new ConnectWiseAutomateAuthenticationError(
-          'Bad request - invalid credentials or parameters',
-          400,
-          responseBody
+        // Malformed request: bad `condition`, unbindable body, model errors.
+        // (Bad credentials never reach here — the token endpoint is handled
+        // by AuthManager.)
+        throw new ConnectWiseAutomateValidationError(
+          describe('Bad request'),
+          this.parseValidationErrors(parsedBody),
+          parsedBody
         );
 
       case 401:
         // If this is already a retry after 401, don't retry again
         if (isRetryAfter401) {
           throw new ConnectWiseAutomateAuthenticationError(
-            'Authentication failed after token refresh',
+            describe('Authentication failed after token refresh'),
             401,
-            responseBody
+            parsedBody
           );
         }
         // Try to refresh the token and retry once
@@ -189,13 +235,16 @@ export class HttpClient {
         return this.executeRequest<T>(url, method, body, skipAuth, retryCount, true);
 
       case 403:
-        throw new ConnectWiseAutomateForbiddenError('Access forbidden - insufficient permissions', responseBody);
+        throw new ConnectWiseAutomateForbiddenError(
+          describe('Access forbidden - insufficient permissions'),
+          parsedBody
+        );
 
       case 404:
-        throw new ConnectWiseAutomateNotFoundError('Resource not found', responseBody);
+        throw new ConnectWiseAutomateNotFoundError(describe('Resource not found'), parsedBody);
 
       case 429:
-        // Rate limited - retry with backoff
+        // Rate limited: the request was not processed, so any method is safe to retry.
         if (this.rateLimiter.shouldRetry(retryCount)) {
           const retryAfterHeader = response.headers.get('Retry-After');
           const delay = this.rateLimiter.parseRetryAfter(retryAfterHeader);
@@ -204,47 +253,54 @@ export class HttpClient {
           return this.executeRequest<T>(url, method, body, skipAuth, retryCount + 1, isRetryAfter401);
         }
         throw new ConnectWiseAutomateRateLimitError(
-          'Rate limit exceeded and max retries reached',
+          describe('Rate limit exceeded and max retries reached'),
           this.config.rateLimit.retryAfterMs,
-          responseBody
+          parsedBody
         );
 
       default:
         if (response.status >= 500) {
-          // Server error - retry once
-          if (retryCount === 0) {
-            await this.sleep(1000);
-            return this.executeRequest<T>(url, method, body, skipAuth, 1, isRetryAfter401);
+          if (this.canRetry(method, retryCount)) {
+            await this.sleep(SERVER_ERROR_RETRY_DELAY_MS);
+            return this.executeRequest<T>(url, method, body, skipAuth, retryCount + 1, isRetryAfter401);
           }
           throw new ConnectWiseAutomateServerError(
-            `Server error: ${response.status} ${response.statusText}`,
+            describe(`Server error: ${response.status} ${response.statusText}`),
             response.status,
-            responseBody
+            parsedBody
           );
         }
         throw new ConnectWiseAutomateError(
-          `Request failed: ${response.status} ${response.statusText}`,
+          describe(`Request failed: ${response.status} ${response.statusText}`),
           response.status,
-          responseBody
+          parsedBody
         );
     }
   }
 
   /**
-   * Check if a response body indicates a validation error
+   * Whether a failed request may be re-sent: only idempotent methods, once.
    */
-  private isValidationError(responseBody: unknown): boolean {
-    if (typeof responseBody === 'object' && responseBody !== null) {
-      const body = responseBody as Record<string, unknown>;
-      // ConnectWise Automate validation errors
-      return Array.isArray(body['Errors']) || Array.isArray(body['errors']) ||
-             typeof body['ModelState'] === 'object';
-    }
-    return false;
+  private canRetry(method: string, retryCount: number): boolean {
+    return IDEMPOTENT_METHODS.has(method) && retryCount === 0;
   }
 
   /**
-   * Parse validation errors from response body
+   * Pull the human-readable message out of an ASP.NET style error body
+   * (`{ "Message": "..." }`), if there is one.
+   */
+  private extractServerMessage(responseBody: unknown): string | undefined {
+    if (typeof responseBody !== 'object' || responseBody === null) {
+      return undefined;
+    }
+    const body = responseBody as Record<string, unknown>;
+    const message = body['Message'] ?? body['message'];
+    return typeof message === 'string' && message.trim() !== '' ? message : undefined;
+  }
+
+  /**
+   * Parse field-level validation errors from a response body
+   * (ASP.NET `ModelState`, or an `Errors` array). Empty when there are none.
    */
   private parseValidationErrors(responseBody: unknown): Array<{ field: string; message: string }> {
     if (typeof responseBody === 'object' && responseBody !== null) {

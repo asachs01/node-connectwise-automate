@@ -21,7 +21,8 @@ export class ConnectWiseAutomateError extends Error {
 }
 
 /**
- * Authentication error (400 bad credentials, 401 unauthorized)
+ * Authentication error (401 unauthorized, a rejected token request, or a
+ * token response that requires a two-factor passcode)
  */
 export class ConnectWiseAutomateAuthenticationError extends ConnectWiseAutomateError {
   constructor(message: string, statusCode: number = 401, response?: unknown) {
@@ -54,7 +55,9 @@ export class ConnectWiseAutomateNotFoundError extends ConnectWiseAutomateError {
 }
 
 /**
- * Validation error (400 with field-level errors)
+ * Validation error (400 bad request — a malformed `condition`, an unbindable
+ * body, or model errors; `errors` is populated when the body carries
+ * ASP.NET `ModelState` or an `Errors` array)
  */
 export class ConnectWiseAutomateValidationError extends ConnectWiseAutomateError {
   /** Field-level validation errors */

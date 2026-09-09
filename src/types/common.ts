@@ -3,20 +3,29 @@
  */
 
 /**
- * Base list parameters for paginated endpoints
+ * Base list parameters for paginated endpoints.
+ *
+ * These are the flat query-parameter names the Automate API binds
+ * (`?condition=...&orderBy=...&pageSize=...&page=...`), the same ones
+ * pyconnectwise and the AutomateAPI PowerShell module send.
  */
 export interface BaseListParams {
-  /** Number of records per page (default: 100) */
+  /** Number of records per page (default: 100; the server accepts at most 1000) */
   pageSize?: number;
   /** Page number (1-indexed, default: 1) */
   page?: number;
-  /** Automate filter expression, e.g. `ComputerName like '%web%'` */
+  /**
+   * Automate filter expression, e.g. `ComputerName like '%web%'`.
+   * Operators: `=`/`eq`, `!=`, `>`, `>=`, `<`, `<=`, `and`, `or`, `()`, `like`,
+   * `contains`, `in`, `not`. String values are single- or double-quoted;
+   * booleans are `true`/`false`.
+   */
   condition?: string;
   /** Comma-separated fields to include in the response */
   includeFields?: string;
   /** Comma-separated fields to omit from the response */
   excludeFields?: string;
-  /** Sort field and direction */
+  /** Sort field and direction, e.g. `ComputerName asc` or `LastContact desc` */
   orderBy?: string;
   /** Expand related entities */
   expand?: string;
@@ -32,32 +41,13 @@ export interface BaseEntity {
 }
 
 /**
- * Response wrapper for list endpoints
- */
-export interface ListResponse<T> {
-  TotalRecords?: number;
-  Data: T[];
-}
-
-/**
- * Normalize a list-endpoint response into the documented `{ Data,
- * TotalRecords }` envelope.
+ * Shape of an Automate list response.
  *
- * The live ConnectWise Automate REST API returns list endpoints (e.g.
- * `/Computers`, `/Clients`) as a **bare JSON array**, even though this
- * library's response types model them as `{ Data, TotalRecords }`. Because
- * the HTTP layer does an unchecked `response.json() as T` cast, that
- * mismatch previously surfaced only at runtime as `response.Data` being
- * `undefined` for every consumer (issue #38). Accept either shape here so
- * a live-API/type mismatch can't silently produce `undefined` where
- * callers expect an array.
+ * Every list route in the Automate OpenAPI spec returns a bare JSON array.
+ * There is no `{ TotalRecords, Data }` envelope and no total-count header;
+ * use `pageSize`/`page` (or a resource's `listAll()`) to walk the full set.
  */
-export function normalizeListResponse<T>(response: T[] | ListResponse<T>): ListResponse<T> {
-  if (Array.isArray(response)) {
-    return { Data: response };
-  }
-  return response;
-}
+export type ListResponse<T> = T[];
 
 /**
  * Extra data fields for computers
@@ -75,6 +65,18 @@ export interface LocationInfo {
   Id: number;
   Name: string;
   ClientId: number;
+}
+
+/**
+ * A JSON-Patch style operation. Automate PATCH routes take an array of these
+ * (`LabTech.RESTApi.Models.PatchOperationArray` in the spec), not a partial
+ * entity. Build them with `toPatchOperations()`.
+ */
+export interface PatchOperation {
+  Op: 'add' | 'replace' | 'remove';
+  /** JSON pointer to the field, e.g. `/Name` */
+  Path: string;
+  Value?: unknown;
 }
 
 /**

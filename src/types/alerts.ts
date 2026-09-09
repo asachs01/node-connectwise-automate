@@ -1,125 +1,55 @@
 /**
  * Alert types for ConnectWise Automate
+ *
+ * Mirrors `Automate.Api.Domain.Contracts.Alerts.Alert` from ConnectWise's
+ * published OpenAPI spec (Computers.json). An alert is keyed by `AlertId`
+ * (not `Id`) and refers to its client, computer, location, monitor and
+ * severity through nested `{ Id, Name }` objects rather than flat columns.
  */
 
-import type { BaseEntity, BaseListParams } from './common.js';
+import type { BaseListParams } from './common.js';
+
+/** Id/Name pair used for the entities an alert refers to */
+export interface AlertReference {
+  Id: number;
+  Name: string;
+}
+
+/** The computer an alert was raised against */
+export interface AlertComputer extends AlertReference {
+  /** Agent status at the time of the read, e.g. `Online` */
+  ComputerStatus?: string;
+}
 
 /**
  * Alert entity
  */
-export interface Alert extends BaseEntity {
-  /** Alert name/subject */
-  Name: string;
-  /** Alert message/description */
-  Message?: string;
-  /** Computer ID */
-  ComputerId?: number;
-  /** Computer name */
-  ComputerName?: string;
-  /** Client ID */
-  ClientId?: number;
-  /** Client name */
-  ClientName?: string;
-  /** Location ID */
-  LocationId?: number;
-  /** Location name */
-  LocationName?: string;
-  /** Alert severity (1-5) */
-  Severity?: number;
-  /** Alert category/type */
-  AlertType?: string;
-  /** Alert source */
+export interface Alert {
+  AlertId: number;
+  Client?: AlertReference;
+  Computer?: AlertComputer;
+  Device?: AlertReference;
+  Location?: AlertReference;
+  /** The monitor that raised the alert */
+  Monitor?: AlertReference;
+  /** When the alert was raised (ISO 8601) */
+  AlertDate?: string;
+  /** Severity lookup, e.g. `{ Id: 3, Name: 'Warning' }` */
+  Severity?: AlertReference;
+  /** Where the alert came from, e.g. the monitor category */
   Source?: string;
-  /** Alert status */
-  Status?: 'New' | 'Acknowledged' | 'Closed';
-  /** Is acknowledged */
-  IsAcknowledged?: boolean;
-  /** Acknowledged by user */
-  AcknowledgedBy?: string;
-  /** Acknowledged date */
-  AcknowledgedDate?: string;
-  /** Date created */
-  DateCreated?: string;
-  /** Last update date */
-  DateModified?: string;
-  /** Ticket ID if linked */
-  TicketId?: number;
+  /** Alert message text */
+  Message?: string;
+  /** The monitored field that tripped */
+  FieldName?: string;
+  /** Age of the alert as a duration string */
+  AlertAge?: string;
 }
 
 /**
- * Alert list parameters
+ * Alert list parameters.
+ *
+ * Automate exposes no dedicated alert filters; narrow results with
+ * `condition`, e.g. `Severity.Name = 'Critical'` or `Computer.Id = 42`.
  */
-export interface AlertListParams extends BaseListParams {
-  /** Filter by computer ID */
-  computerId?: number;
-  /** Filter by client ID */
-  clientId?: number;
-  /** Filter by location ID */
-  locationId?: number;
-  /** Filter by severity */
-  severity?: number;
-  /** Filter by status */
-  status?: 'New' | 'Acknowledged' | 'Closed';
-  /** Filter by acknowledged state */
-  isAcknowledged?: boolean;
-  /** Filter by date range start */
-  startDate?: string;
-  /** Filter by date range end */
-  endDate?: string;
-}
-
-/**
- * Alert list response
- */
-export interface AlertListResponse {
-  TotalRecords?: number;
-  Data: Alert[];
-}
-
-/**
- * Alert acknowledge data
- */
-export interface AlertAcknowledgeData {
-  /** Alert IDs to acknowledge */
-  AlertIds: number[];
-  /** Acknowledgment notes */
-  Notes?: string;
-}
-
-/**
- * Alert acknowledge result
- */
-export interface AlertAcknowledgeResult {
-  /** Number of alerts acknowledged */
-  Count: number;
-  /** Successfully acknowledged alert IDs */
-  AcknowledgedAlertIds: number[];
-  /** Failed alert IDs */
-  FailedAlertIds?: number[];
-}
-
-/**
- * Alert close data
- */
-export interface AlertCloseData {
-  /** Alert IDs to close */
-  AlertIds: number[];
-  /** Close notes */
-  Notes?: string;
-}
-
-/**
- * Alert statistics
- */
-export interface AlertStatistics {
-  /** Total alerts */
-  Total: number;
-  /** New alerts */
-  New: number;
-  /** Acknowledged alerts */
-  Acknowledged: number;
-  /** Closed alerts */
-  Closed: number;
-  /** By severity */
-  BySeverity: Record<number, number>;
-}
+export type AlertListParams = BaseListParams;

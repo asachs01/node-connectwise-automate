@@ -1,5 +1,10 @@
 /**
  * Computers integration tests
+ *
+ * Wire shapes follow ConnectWise's Automate swagger (Computers.json,
+ * Commands.json): list routes return bare arrays, `GET /Computers` filters
+ * only through `condition`, and a command's outcome is read back from its own
+ * CommandExecute row via the `ids` filter.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -8,6 +13,9 @@ import { ConnectWiseAutomateClient } from '../../src/client.js';
 import { ConnectWiseAutomateNotFoundError } from '../../src/errors.js';
 import { server } from '../mocks/server.js';
 import * as fixtures from '../fixtures/index.js';
+import type { ComputerCommandExecution } from '../../src/types/computers.js';
+
+const API = 'https://testserver.hostedrmm.com/cwa/api/v1';
 
 describe('Computers Resource', () => {
   const createClient = () =>
@@ -21,35 +29,26 @@ describe('Computers Resource', () => {
       },
     });
 
+  /** Serve the first page for GET /Computers and capture its query string. */
+  function captureListQuery(): () => URLSearchParams | undefined {
+    let query: URLSearchParams | undefined;
+    server.use(
+      http.get(`${API}/Computers`, ({ request }) => {
+        query = new URL(request.url).searchParams;
+        return HttpResponse.json(fixtures.computers.listPage1);
+      })
+    );
+    return () => query;
+  }
+
   describe('list', () => {
-    it('should list computers', async () => {
+    it('should return the bare array Automate sends', async () => {
       const client = createClient();
-      const response = await client.computers.list();
+      const computers = await client.computers.list();
 
-      expect(response.TotalRecords).toBe(3);
-      expect(response.Data).toHaveLength(2);
-      expect(response.Data[0]?.ComputerName).toBe('WORKSTATION-001');
-    });
-
-    it('should normalize a bare JSON array response into { Data, TotalRecords }', async () => {
-      // The live Automate REST API returns list endpoints as a bare array,
-      // even though this library's types model them as { Data, TotalRecords }
-      // (issue #38). A consumer reading response.Data must not get undefined.
-      server.use(
-        http.get('https://testserver.hostedrmm.com/cwa/api/v1/Computers', () =>
-          HttpResponse.json([
-            { Id: 1, ComputerName: 'BARE-ARRAY-001' },
-            { Id: 2, ComputerName: 'BARE-ARRAY-002' },
-          ])
-        )
-      );
-
-      const client = createClient();
-      const response = await client.computers.list();
-
-      expect(response.Data).toHaveLength(2);
-      expect(response.Data[0]?.ComputerName).toBe('BARE-ARRAY-001');
-      expect(response.TotalRecords).toBeUndefined();
+      expect(Array.isArray(computers)).toBe(true);
+      expect(computers).toHaveLength(2);
+      expect(computers[0]?.ComputerName).toBe('WORKSTATION-001');
     });
 
     it('should support pagination', async () => {
@@ -57,9 +56,50 @@ describe('Computers Resource', () => {
       const page1 = await client.computers.list({ page: 1 });
       const page2 = await client.computers.list({ page: 2 });
 
-      expect(page1.Data).toHaveLength(2);
-      expect(page2.Data).toHaveLength(1);
-      expect(page2.Data[0]?.ComputerName).toBe('LAPTOP-001');
+      expect(page1).toHaveLength(2);
+      expect(page2).toHaveLength(1);
+      expect(page2[0]?.ComputerName).toBe('LAPTOP-001');
+    });
+
+    it('should express clientId, locationId and isOnline as a condition', async () => {
+      // GET /Computers has no such query parameters — filtering is only
+      // possible through `condition` — so the convenience filters must be
+      // folded into one expression.
+      const client = createClient();
+      const getQuery = captureListQuery();
+
+      await client.computers.list({ clientId: 100, locationId: 1, isOnline: true });
+
+      const query = getQuery();
+      expect(query?.get('condition')).toBe(
+        "(Client.Id = 100) and (Location.Id = 1) and (Status = 'Online')"
+      );
+      expect(query?.has('clientId')).toBe(false);
+      expect(query?.has('locationId')).toBe(false);
+      expect(query?.has('isOnline')).toBe(false);
+    });
+
+    it('should combine a caller condition with the convenience filters', async () => {
+      const client = createClient();
+      const getQuery = captureListQuery();
+
+      await client.computers.list({
+        condition: "ComputerName like '%web%'",
+        isOnline: false,
+      });
+
+      expect(getQuery()?.get('condition')).toBe(
+        "(ComputerName like '%web%') and (Status = 'Offline')"
+      );
+    });
+
+    it('should pass a bare condition through untouched', async () => {
+      const client = createClient();
+      const getQuery = captureListQuery();
+
+      await client.computers.list({ condition: 'Client.Id = 7' });
+
+      expect(getQuery()?.get('condition')).toBe('Client.Id = 7');
     });
   });
 
@@ -77,13 +117,17 @@ describe('Computers Resource', () => {
   });
 
   describe('get', () => {
-    it('should get a single computer', async () => {
+    it('should get a single computer with its real field names', async () => {
       const client = createClient();
       const computer = await client.computers.get(1);
 
       expect(computer.Id).toBe(1);
       expect(computer.ComputerName).toBe('WORKSTATION-001');
-      expect(computer.OS).toBe('Windows 11 Pro');
+      expect(computer.OperatingSystemName).toBe('Windows 11 Pro');
+      expect(computer.Status).toBe('Online');
+      expect(computer.Client?.Id).toBe(100);
+      expect(computer.Location?.Name).toBe('Main Office');
+      expect(computer.RemoteAgentLastContact).toBe('2024-01-15T10:30:00Z');
       expect(computer.SerialNumber).toBe('ABC123456');
     });
 
@@ -94,54 +138,16 @@ describe('Computers Resource', () => {
     });
   });
 
-  describe('create', () => {
-    it('should create a computer', async () => {
-      const client = createClient();
-      const computer = await client.computers.create({
-        ComputerName: 'NEW-WORKSTATION',
-        ClientId: 100,
-        LocationId: 1,
-      });
-
-      expect(computer.Id).toBe(10);
-      expect(computer.ComputerName).toBe('NEW-WORKSTATION');
-    });
-  });
-
-  describe('update', () => {
-    it('should update a computer', async () => {
-      const client = createClient();
-      const computer = await client.computers.update(1, {
-        ComputerName: 'WORKSTATION-001-RENAMED',
-        Comment: 'Updated comment',
-      });
-
-      expect(computer.ComputerName).toBe('WORKSTATION-001-RENAMED');
-      expect(computer.Comment).toBe('Updated comment');
-    });
-  });
-
-  describe('delete', () => {
-    it('should delete a computer', async () => {
-      const client = createClient();
-
-      await expect(client.computers.delete(1)).resolves.toBeUndefined();
-    });
-  });
-
   describe('executeCommand', () => {
     it('should post the command as a nested catalog reference', async () => {
       const client = createClient();
       let sentBody: unknown;
 
       server.use(
-        http.post(
-          'https://testserver.hostedrmm.com/cwa/api/v1/Computers/:id/CommandExecute',
-          async ({ request }) => {
-            sentBody = await request.json();
-            return HttpResponse.json(fixtures.computers.commandResult);
-          }
-        )
+        http.post(`${API}/Computers/:id/CommandExecute`, async ({ request }) => {
+          sentBody = await request.json();
+          return HttpResponse.json(fixtures.computers.commandResult);
+        })
       );
 
       const result = await client.computers.executeCommand(1, {
@@ -162,14 +168,162 @@ describe('Computers Resource', () => {
     });
   });
 
+  describe('commandExecutions', () => {
+    it('should pass ids through so a single execution can be fetched', async () => {
+      const client = createClient();
+      let query: URLSearchParams | undefined;
+
+      server.use(
+        http.get(`${API}/Computers/:id/CommandExecute`, ({ request }) => {
+          query = new URL(request.url).searchParams;
+          return HttpResponse.json([fixtures.computers.commandResult]);
+        })
+      );
+
+      const rows = await client.computers.commandExecutions(1, { ids: '4711' });
+
+      expect(query?.get('ids')).toBe('4711');
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.Id).toBe(4711);
+    });
+  });
+
+  describe('executeCommandAndWait', () => {
+    const row = (
+      overrides: Partial<ComputerCommandExecution> = {}
+    ): ComputerCommandExecution => ({
+      Id: 4711,
+      ComputerId: 1,
+      Command: { Id: '2', Name: 'Command Prompt' },
+      Parameters: ['ipconfig /all'],
+      Status: 'Pending',
+      ...overrides,
+    });
+
+    /**
+     * Mock the execute POST and a sequence of GET CommandExecute responses;
+     * the last response repeats once the sequence is exhausted. Returns the
+     * `ids` value each poll carried and a count of CommandHistory reads.
+     */
+    function mockExecution(
+      posted: ComputerCommandExecution,
+      polls: ComputerCommandExecution[][]
+    ): { polledIds: (string | null)[]; historyReads: () => number } {
+      const polledIds: (string | null)[] = [];
+      let historyReads = 0;
+
+      server.use(
+        http.post(`${API}/Computers/:id/CommandExecute`, () => HttpResponse.json(posted)),
+        http.get(`${API}/Computers/:id/CommandExecute`, ({ request }) => {
+          polledIds.push(new URL(request.url).searchParams.get('ids'));
+          const next = polls.length > 1 ? polls.shift() : polls[0];
+          return HttpResponse.json(next ?? []);
+        }),
+        http.get(`${API}/Computers/:id/CommandHistory`, () => {
+          historyReads++;
+          return HttpResponse.json(fixtures.computers.commandHistory);
+        })
+      );
+
+      return { polledIds, historyReads: () => historyReads };
+    }
+
+    it('should poll the execute row by its id until the status is terminal', async () => {
+      const client = createClient();
+      const { polledIds, historyReads } = mockExecution(row(), [
+        [row({ Status: 'Executing' })],
+        [row({ Status: 'Success', Output: 'Windows IP Configuration' })],
+      ]);
+
+      const result = await client.computers.executeCommandAndWait(
+        1,
+        { Command: { Id: '2' }, Parameters: ['ipconfig /all'] },
+        { pollIntervalMs: 1, timeoutMs: 5_000 }
+      );
+
+      expect(result.completed).toBe(true);
+      expect(result.status).toBe('Success');
+      expect(result.output).toBe('Windows IP Configuration');
+      expect(result.execution.Id).toBe(4711);
+      // Correlation is by the id the execute call returned, on the execute
+      // route itself — never by scanning CommandHistory for "something new".
+      expect(polledIds).toHaveLength(2);
+      expect(polledIds.every((id) => id === '4711')).toBe(true);
+      expect(historyReads()).toBe(0);
+    });
+
+    it('should report a failed command as completed, with its status', async () => {
+      const client = createClient();
+      mockExecution(row(), [[row({ Status: 'Failed', Output: 'Access is denied.' })]]);
+
+      const result = await client.computers.executeCommandAndWait(
+        1,
+        { Command: { Id: '2' } },
+        { pollIntervalMs: 1, timeoutMs: 5_000 }
+      );
+
+      expect(result.completed).toBe(true);
+      expect(result.status).toBe('Failed');
+      expect(result.output).toBe('Access is denied.');
+    });
+
+    it('should only read the row carrying the returned id', async () => {
+      const client = createClient();
+      const stale = row({ Id: 4000, Status: 'Success', Output: 'stale' });
+      mockExecution(row(), [
+        [stale, row({ Status: 'Executing' })],
+        [stale, row({ Status: 'Success', Output: 'fresh' })],
+      ]);
+
+      const result = await client.computers.executeCommandAndWait(
+        1,
+        { Command: { Id: '2' } },
+        { pollIntervalMs: 1, timeoutMs: 5_000 }
+      );
+
+      expect(result.execution.Id).toBe(4711);
+      expect(result.output).toBe('fresh');
+    });
+
+    it('should not poll when the execute call already reports a terminal status', async () => {
+      const client = createClient();
+      const { polledIds } = mockExecution(row({ Status: 'Terminated' }), []);
+
+      const result = await client.computers.executeCommandAndWait(
+        1,
+        { Command: { Id: '2' } },
+        { pollIntervalMs: 1, timeoutMs: 5_000 }
+      );
+
+      expect(result.completed).toBe(true);
+      expect(result.status).toBe('Terminated');
+      expect(polledIds).toHaveLength(0);
+    });
+
+    it('should give up after the timeout and report the last observed status', async () => {
+      const client = createClient();
+      mockExecution(row(), [[row({ Status: 'Executing' })]]);
+
+      const result = await client.computers.executeCommandAndWait(
+        1,
+        { Command: { Id: '2' } },
+        { pollIntervalMs: 1, timeoutMs: 40 }
+      );
+
+      expect(result.completed).toBe(false);
+      expect(result.status).toBe('Executing');
+      expect(result.execution.Id).toBe(4711);
+      expect(result.waitedMs).toBeGreaterThanOrEqual(40);
+    });
+  });
+
   describe('commandHistory', () => {
     it('should return the bare array Automate sends', async () => {
       const client = createClient();
 
       server.use(
-        http.get(
-          'https://testserver.hostedrmm.com/cwa/api/v1/Computers/:id/CommandHistory',
-          () => HttpResponse.json(fixtures.computers.commandHistory)
+        http.get(`${API}/Computers/:id/CommandHistory`, () =>
+          HttpResponse.json(fixtures.computers.commandHistory)
         )
       );
 
@@ -186,9 +340,7 @@ describe('Computers Resource', () => {
       const client = createClient();
 
       server.use(
-        http.get('https://testserver.hostedrmm.com/cwa/api/v1/Commands', () =>
-          HttpResponse.json(fixtures.computers.commandCatalog)
-        )
+        http.get(`${API}/Commands`, () => HttpResponse.json(fixtures.computers.commandCatalog))
       );
 
       const commands = await client.computers.commands();
@@ -196,35 +348,21 @@ describe('Computers Resource', () => {
       expect(commands).toHaveLength(2);
       expect(commands[1]?.Name).toBe('Command Prompt');
     });
-  });
 
-  describe('restart', () => {
-    it('should restart a computer', async () => {
+    it('should get a single catalog command', async () => {
       const client = createClient();
 
-      await expect(client.computers.restart(1)).resolves.toBeUndefined();
-    });
+      server.use(
+        http.get(`${API}/Commands/:id`, ({ params }) =>
+          HttpResponse.json(
+            fixtures.computers.commandCatalog.find((c) => c.Id === params['id'])
+          )
+        )
+      );
 
-    it('should restart with options', async () => {
-      const client = createClient();
+      const command = await client.computers.getCommand('2');
 
-      await expect(client.computers.restart(1, true, 5)).resolves.toBeUndefined();
-    });
-  });
-
-  describe('shutdown', () => {
-    it('should shutdown a computer', async () => {
-      const client = createClient();
-
-      await expect(client.computers.shutdown(1)).resolves.toBeUndefined();
-    });
-  });
-
-  describe('wakeUp', () => {
-    it('should wake up a computer', async () => {
-      const client = createClient();
-
-      await expect(client.computers.wakeUp(1)).resolves.toBeUndefined();
+      expect(command.Name).toBe('Command Prompt');
     });
   });
 });

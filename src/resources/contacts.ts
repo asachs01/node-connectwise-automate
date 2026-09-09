@@ -1,11 +1,21 @@
 /**
- * Contacts resource operations
+ * Contacts resource.
+ *
+ * Contacts live on the **v2** API. The v1 API has only a read-only
+ * `GET /api/v1/Contacts`; per the Automate OpenAPI spec (Contacts.json) the
+ * routes below exist solely under `/api/v2`:
+ *
+ *   GET/POST         /api/v2/Contacts
+ *   GET/PUT/DELETE   /api/v2/Contacts/{contactId}
+ *
+ * There is no PATCH: an update is a full PUT replacement. The list route
+ * returns a bare array and takes only the shared list options.
  */
 
 import type { HttpClient } from '../http.js';
 import type { PaginatedIterable } from '../pagination.js';
 import { createPaginatedIterable } from '../pagination.js';
-import { normalizeListResponse } from '../types/common.js';
+import { buildBaseListParams } from '../params.js';
 import type {
   Contact,
   ContactListParams,
@@ -25,13 +35,13 @@ export class ContactsResource {
   }
 
   /**
-   * List contacts with optional filtering
+   * List contacts. Filter with `condition`.
    */
   async list(params?: ContactListParams): Promise<ContactListResponse> {
-    const response = await this.httpClient.request<ContactListResponse | Contact[]>('/Contacts', {
-      params: this.buildListParams(params),
+    return this.httpClient.request<ContactListResponse>('/Contacts', {
+      params: buildBaseListParams(params),
+      apiVersion: 'v2',
     });
-    return normalizeListResponse(response);
   }
 
   /**
@@ -41,7 +51,9 @@ export class ContactsResource {
     return createPaginatedIterable<Contact>(
       this.httpClient,
       '/Contacts',
-      this.buildListParams(params)
+      buildBaseListParams(params),
+      undefined,
+      'v2'
     );
   }
 
@@ -49,26 +61,29 @@ export class ContactsResource {
    * Get a single contact by ID
    */
   async get(id: number): Promise<Contact> {
-    return this.httpClient.request<Contact>(`/Contacts/${id}`);
+    return this.httpClient.request<Contact>(`/Contacts/${id}`, { apiVersion: 'v2' });
   }
 
   /**
-   * Create a new contact
+   * Create a new contact under `data.Client.ClientId`
    */
   async create(data: ContactCreateData): Promise<Contact> {
     return this.httpClient.request<Contact>('/Contacts', {
       method: 'POST',
       body: data,
+      apiVersion: 'v2',
     });
   }
 
   /**
-   * Update an existing contact
+   * Replace a contact (`PUT`). The v2 contacts API has no partial update, so
+   * `data` must be the full record.
    */
   async update(id: number, data: ContactUpdateData): Promise<Contact> {
     return this.httpClient.request<Contact>(`/Contacts/${id}`, {
-      method: 'PATCH',
+      method: 'PUT',
       body: data,
+      apiVersion: 'v2',
     });
   }
 
@@ -78,27 +93,7 @@ export class ContactsResource {
   async delete(id: number): Promise<void> {
     await this.httpClient.request<void>(`/Contacts/${id}`, {
       method: 'DELETE',
+      apiVersion: 'v2',
     });
-  }
-
-  /**
-   * Build query parameters from list params
-   */
-  private buildListParams(params?: ContactListParams): Record<string, string | number | boolean | undefined> {
-    if (!params) return {};
-
-    const result: Record<string, string | number | boolean | undefined> = {};
-
-    if (params.pageSize !== undefined) result['pageSize'] = params.pageSize;
-    if (params.page !== undefined) result['page'] = params.page;
-    if (params.condition !== undefined) result['condition'] = params.condition;
-    if (params.includeFields !== undefined) result['includeFields'] = params.includeFields;
-    if (params.orderBy !== undefined) result['orderBy'] = params.orderBy;
-    if (params.expand !== undefined) result['expand'] = params.expand;
-    if (params.clientId !== undefined) result['clientId'] = params.clientId;
-    if (params.locationId !== undefined) result['locationId'] = params.locationId;
-    if (params.email !== undefined) result['email'] = params.email;
-
-    return result;
   }
 }

@@ -12,10 +12,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { HttpClient } from '../../src/http.js';
 import { AuthManager } from '../../src/auth.js';
 import { RateLimiter } from '../../src/rate-limiter.js';
+import { buildBaseListParams } from '../../src/params.js';
 import {
   ConnectWiseAutomateError,
   ConnectWiseAutomateNotFoundError,
   ConnectWiseAutomateServerError,
+  ConnectWiseAutomateValidationError,
 } from '../../src/errors.js';
 import type { ResolvedConfig } from '../../src/config.js';
 
@@ -129,5 +131,202 @@ describe('HttpClient response handling', () => {
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ConnectWiseAutomateError);
     expect((err as ConnectWiseAutomateError).response).toBe('teapot');
+  });
+});
+
+/**
+ * Transport contract checked against the Automate OpenAPI spec and the
+ * connectwise-rest / pyconnectwise / AutomateAPI.ps1 reference clients.
+ */
+describe('HttpClient transport contract', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function lastCall(): { url: string; init: RequestInit } {
+    const calls = vi.mocked(fetch).mock.calls;
+    const call = calls[calls.length - 1] as [string, RequestInit];
+    return { url: call[0], init: call[1] };
+  }
+
+  it('builds https://host/cwa/api/v1<path> with encoded query params', async () => {
+    vi.mocked(fetch).mockResolvedValue(realResponse('[]'));
+    await makeClient().request('/Computers', {
+      params: { condition: "ComputerName like '%web%'", pageSize: 50, page: 1, skip: undefined },
+    });
+    const { url } = lastCall();
+    expect(url).toBe(
+      "https://testserver.hostedrmm.com/cwa/api/v1/Computers?condition=ComputerName+like+%27%25web%25%27&pageSize=50&page=1"
+    );
+  });
+
+  it('sends the flat list query-parameter names the API actually binds', async () => {
+    // The swagger names these `options.pageSize`, `options.orderBy.name`,
+    // `options.includedFields`, `options.expands`, ... — but that is the C#
+    // QueryOptions binder's view. Every working client (pyconnectwise
+    // ConnectWiseAutomateRequestParams, AutomateAPI.ps1 Get-AutomateAPIGeneric)
+    // sends the bare names below, with orderBy as one "Field asc|desc" string.
+    vi.mocked(fetch).mockResolvedValue(realResponse('[]'));
+    await makeClient().request('/Computers', {
+      params: buildBaseListParams({
+        pageSize: 50,
+        page: 2,
+        condition: "Status = 'Online'",
+        orderBy: 'ComputerName desc',
+        expand: 'Client',
+        includeFields: 'Id,ComputerName',
+        excludeFields: 'Comment',
+        ids: '1,2',
+      }),
+    });
+    expect(lastCall().url).toBe(
+      'https://testserver.hostedrmm.com/cwa/api/v1/Computers' +
+        '?pageSize=50&page=2&condition=Status+%3D+%27Online%27&orderBy=ComputerName+desc' +
+        '&expand=Client&includeFields=Id%2CComputerName&excludeFields=Comment&ids=1%2C2'
+    );
+  });
+
+  it('targets /cwa/api/v2 when apiVersion is v2', async () => {
+    vi.mocked(fetch).mockResolvedValue(realResponse('{}'));
+    await makeClient().request('/Contacts/7', { apiVersion: 'v2' });
+    expect(lastCall().url).toBe('https://testserver.hostedrmm.com/cwa/api/v2/Contacts/7');
+  });
+
+  it('inserts the missing leading slash on a path', async () => {
+    vi.mocked(fetch).mockResolvedValue(realResponse('[]'));
+    await makeClient().request('Computers');
+    expect(lastCall().url).toBe('https://testserver.hostedrmm.com/cwa/api/v1/Computers');
+  });
+
+  it('sends Authorization Bearer, ClientId, Accept and Content-Type headers', async () => {
+    vi.mocked(fetch).mockResolvedValue(realResponse('[]'));
+    await makeClient().request('/Computers');
+    const headers = lastCall().init.headers as Record<string, string>;
+    expect(headers['Authorization']).toBe('Bearer test-token');
+    expect(headers['ClientId']).toBe('test-client-id');
+    expect(headers['Accept']).toBe('application/json');
+    expect(headers['Content-Type']).toBe('application/json');
+  });
+
+  it('JSON-encodes the body for POST', async () => {
+    vi.mocked(fetch).mockResolvedValue(realResponse('{}'));
+    await makeClient().request('/Batch/ScriptExecute', { method: 'POST', body: { EntityIds: [1] } });
+    const { init } = lastCall();
+    expect(init.method).toBe('POST');
+    expect(init.body).toBe('{"EntityIds":[1]}');
+  });
+
+  it('maps a plain 400 to a validation error carrying the server message', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      realResponse('{"Message":"Invalid condition: unknown field Foo"}', { status: 400 })
+    );
+    const err = await makeClient()
+      .request('/Computers', { params: { condition: 'Foo = 1' } })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConnectWiseAutomateValidationError);
+    expect((err as Error).message).toContain('Invalid condition: unknown field Foo');
+    expect((err as ConnectWiseAutomateValidationError).errors).toEqual([]);
+  });
+
+  it('maps a 400 with ModelState to field-level validation errors', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      realResponse('{"Message":"The request is invalid.","ModelState":{"Name":["Name is required"]}}', {
+        status: 400,
+      })
+    );
+    const err = await makeClient()
+      .request('/Clients', { method: 'POST', body: {} })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConnectWiseAutomateValidationError);
+    expect((err as ConnectWiseAutomateValidationError).errors).toEqual([
+      { field: 'Name', message: 'Name is required' },
+    ]);
+  });
+
+  it('includes the server message in a 404 error', async () => {
+    vi.mocked(fetch).mockResolvedValue(realResponse('{"Message":"Computer 999 not found"}', { status: 404 }));
+    const err = await makeClient()
+      .request('/Computers/999')
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConnectWiseAutomateNotFoundError);
+    expect((err as Error).message).toContain('Computer 999 not found');
+  });
+
+  it('refreshes the token and retries once on 401', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(realResponse('{"Message":"expired"}', { status: 401 }))
+      .mockResolvedValueOnce(realResponse('[{"Id":1}]'));
+    const auth = {
+      getToken: vi.fn().mockResolvedValueOnce('stale').mockResolvedValueOnce('fresh'),
+      refreshToken: vi.fn().mockResolvedValue('fresh'),
+    } as unknown as AuthManager;
+    const client = new HttpClient(config, auth, new RateLimiter(config.rateLimit));
+
+    const result = await client.request('/Computers');
+
+    expect(result).toEqual([{ Id: 1 }]);
+    expect(auth.refreshToken).toHaveBeenCalledTimes(1);
+    expect((lastCall().init.headers as Record<string, string>)['Authorization']).toBe('Bearer fresh');
+  });
+
+  it('retries a GET once on 5xx', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(realResponse('{"Message":"boom"}', { status: 502 }))
+      .mockResolvedValueOnce(realResponse('[{"Id":1}]'));
+    const result = await makeClient().request('/Computers');
+    expect(result).toEqual([{ Id: 1 }]);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  }, 15000);
+
+  it('does NOT retry a POST on 5xx', async () => {
+    vi.mocked(fetch).mockResolvedValue(realResponse('{"Message":"boom"}', { status: 502 }));
+    const err = await makeClient()
+      .request('/Batch/ScriptExecute', { method: 'POST', body: {} })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConnectWiseAutomateServerError);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT retry a PATCH on 5xx', async () => {
+    vi.mocked(fetch).mockResolvedValue(realResponse('{"Message":"boom"}', { status: 500 }));
+    await expect(
+      makeClient().request('/Clients/1', { method: 'PATCH', body: [] })
+    ).rejects.toBeInstanceOf(ConnectWiseAutomateServerError);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a GET once when fetch itself fails mid-transfer', async () => {
+    vi.mocked(fetch)
+      .mockRejectedValueOnce(new TypeError('terminated'))
+      .mockResolvedValueOnce(realResponse('[{"Id":1}]'));
+    const result = await makeClient().request('/Computers');
+    expect(result).toEqual([{ Id: 1 }]);
+    expect(fetch).toHaveBeenCalledTimes(2);
+  }, 15000);
+
+  it('re-throws the raw transport error for a POST without retrying', async () => {
+    const terminated = new TypeError('terminated');
+    vi.mocked(fetch).mockRejectedValue(terminated);
+    const err = await makeClient()
+      .request('/Computers/1/CommandExecute', { method: 'POST', body: {} })
+      .catch((e: unknown) => e);
+    // Consumers (connectwise-automate-mcp) detect this exact error; keep it intact.
+    expect(err).toBe(terminated);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a POST on 429 because the request was never processed', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        realResponse('{"Message":"slow down"}', { status: 429, headers: { 'Retry-After': '0' } })
+      )
+      .mockResolvedValueOnce(realResponse('{"Ok":true}'));
+    const result = await makeClient().request('/Batch/ScriptExecute', { method: 'POST', body: {} });
+    expect(result).toEqual({ Ok: true });
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 });

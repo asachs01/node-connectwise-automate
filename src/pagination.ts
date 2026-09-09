@@ -1,11 +1,14 @@
 /**
  * Pagination utilities for the ConnectWise Automate API
  *
- * ConnectWise Automate uses offset-based pagination with page and pageSize parameters.
+ * Automate takes 1-based `page` / `pageSize` query parameters and returns
+ * each page as a bare JSON array. There is no total count and no Link header,
+ * so the only way to detect the last page is a short or empty page — which is
+ * what connectwise-rest, pyconnectwise and AutomateAPI.ps1 all rely on.
  */
 
-import type { HttpClient } from './http.js';
-import { normalizeListResponse } from './types/common.js';
+import type { ApiVersion, HttpClient, RequestOptions } from './http.js';
+import type { ListResponse } from './types/common.js';
 
 /**
  * Pagination parameters
@@ -17,14 +20,27 @@ export interface PaginationParams {
   page?: number;
 }
 
+/** Default page size. The server accepts at most 1000. */
+export const DEFAULT_PAGE_SIZE = 100;
+
 /**
- * Paginated response structure from ConnectWise Automate
+ * Coerce a list response into an array.
+ *
+ * Automate returns a bare array. The legacy `{ Data: T[] }` envelope this
+ * library used to model is still unwrapped so older fixtures keep working;
+ * anything else becomes an empty list rather than a crash or an endless loop.
  */
-export interface PaginatedResponse<T> {
-  /** Total number of records */
-  TotalRecords?: number;
-  /** The data array */
-  Data: T[];
+export function normalizeListResponse<T>(raw: unknown): ListResponse<T> {
+  if (Array.isArray(raw)) {
+    return raw as T[];
+  }
+  if (typeof raw === 'object' && raw !== null) {
+    const data = (raw as { Data?: unknown }).Data;
+    if (Array.isArray(data)) {
+      return data as T[];
+    }
+  }
+  return [];
 }
 
 /**
@@ -35,66 +51,38 @@ export class PaginatedIterable<T> implements AsyncIterable<T> {
   private readonly path: string;
   private readonly params: Record<string, string | number | boolean | undefined>;
   private readonly pageSize: number;
+  private readonly apiVersion: ApiVersion | undefined;
 
   constructor(
     httpClient: HttpClient,
     path: string,
     params: Record<string, string | number | boolean | undefined> = {},
-    pageSize: number = 100
+    pageSize: number = DEFAULT_PAGE_SIZE,
+    apiVersion?: ApiVersion
   ) {
     this.httpClient = httpClient;
     this.path = path;
     this.params = params;
     this.pageSize = pageSize;
+    this.apiVersion = apiVersion;
   }
 
   async *[Symbol.asyncIterator](): AsyncIterator<T> {
-    let page = 1;
-    let totalRecords: number | null = null;
-    let fetchedRecords = 0;
-
-    while (true) {
-      // Fetch the current page. The live API returns list endpoints as a
-      // bare array rather than the documented { Data, TotalRecords }
-      // envelope (issue #38) — normalize either shape.
-      const raw = await this.httpClient.request<PaginatedResponse<T> | T[]>(this.path, {
-        params: {
-          ...this.params,
-          pageSize: this.pageSize,
-          page,
-        },
-      });
-      const response = normalizeListResponse(raw);
-
-      // Get total record count on first page
-      if (totalRecords === null) {
-        totalRecords = response.TotalRecords ?? 0;
+    for (let page = 1; ; page++) {
+      const options: RequestOptions = {
+        params: { ...this.params, pageSize: this.pageSize, page },
+      };
+      if (this.apiVersion) {
+        options.apiVersion = this.apiVersion;
       }
 
-      // Get items from the response
-      const items = response.Data;
-      if (!items || items.length === 0) {
-        break;
-      }
+      const items = normalizeListResponse<T>(await this.httpClient.request<unknown>(this.path, options));
+      yield* items;
 
-      // Yield each item
-      for (const item of items) {
-        yield item;
-        fetchedRecords++;
-      }
-
-      // Check if we've fetched all records
-      if (totalRecords > 0 && fetchedRecords >= totalRecords) {
-        break;
-      }
-
-      // If we got fewer items than page size, we're done
+      // A short (or empty) page is the last one.
       if (items.length < this.pageSize) {
         break;
       }
-
-      // Move to next page
-      page++;
     }
   }
 
@@ -130,7 +118,8 @@ export function createPaginatedIterable<T>(
   httpClient: HttpClient,
   path: string,
   params?: Record<string, string | number | boolean | undefined>,
-  pageSize?: number
+  pageSize?: number,
+  apiVersion?: ApiVersion
 ): PaginatedIterable<T> {
-  return new PaginatedIterable<T>(httpClient, path, params, pageSize);
+  return new PaginatedIterable<T>(httpClient, path, params, pageSize, apiVersion);
 }

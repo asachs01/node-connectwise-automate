@@ -1,128 +1,136 @@
 /**
- * Computer (Agent) types for ConnectWise Automate
+ * Computer (agent) and command types for ConnectWise Automate.
+ *
+ * Field names follow ConnectWise's Automate swagger: `LabTech.Models.Computer`,
+ * `LabTech.Models.Command`, `LabTech.Models.CommandExecute` and
+ * `Automate.Api.Domain.Contracts.Compatibility.CommandHistory`.
  */
 
-import type { BaseEntity, BaseListParams, ExtraDataField, LocationInfo } from './common.js';
+import type { BaseEntity, BaseListParams, ListResponse } from './common.js';
 
 /**
- * Computer entity (an agent/endpoint)
+ * A related entity as Automate embeds it on a computer: id plus display name.
  */
-export interface Computer extends BaseEntity {
-  /** Computer name */
-  ComputerName: string;
-  /** Client ID */
-  ClientId: number;
-  /** Client name */
-  Client?: {
-    Id: number;
-    Name: string;
-  };
-  /** Location ID */
-  LocationId: number;
-  /** Location info */
-  Location?: LocationInfo;
-  /** Domain name */
-  Domain?: string;
-  /** Username of last logged in user */
-  LastUserName?: string;
-  /** Operating system */
-  OS?: string;
-  /** OS version */
-  OSVersion?: string;
-  /** Service pack */
-  ServicePack?: string;
-  /** Computer type */
-  Type?: string;
-  /** BIOS manufacturer */
-  BiosManufacturer?: string;
-  /** BIOS name */
-  BiosName?: string;
-  /** BIOS version */
-  BiosVersion?: string;
-  /** Serial number */
-  SerialNumber?: string;
-  /** Computer model */
-  Model?: string;
-  /** Manufacturer */
-  Manufacturer?: string;
-  /** Total memory in MB */
-  TotalMemory?: number;
-  /** Total disk space in GB */
-  TotalDiskSpace?: number;
-  /** Free disk space in GB */
-  FreeDiskSpace?: number;
-  /** IP address */
-  LocalIPAddress?: string;
-  /** MAC address */
-  MacAddress?: string;
-  /** External IP address */
-  ExternalIPAddress?: string;
-  /** Is online */
-  IsOnline?: boolean;
-  /** Last contact time */
-  LastContact?: string;
-  /** Last heartbeat time */
-  LastHeartbeat?: string;
-  /** Date added */
-  DateAdded?: string;
-  /** Agent version */
-  AgentVersion?: string;
-  /** Network probe status */
-  IsNetworkProbe?: boolean;
-  /** Is virtualized */
-  IsVirtual?: boolean;
-  /** Uptime in seconds */
-  UptimeSeconds?: number;
-  /** Comment/notes */
-  Comment?: string;
-  /** Asset tag */
-  AssetTag?: string;
-  /** Extra data fields */
-  ExtraDataFields?: ExtraDataField[];
+export interface EntityRef {
+  Id: number;
+  Name?: string;
+}
+
+/** A user session on a computer (`LabTech.Models.LoggedInUser`). */
+export interface LoggedInUser {
+  LoggedInUserName?: string;
+  ConsoleId?: number;
 }
 
 /**
- * Computer list parameters
+ * Computer entity (an agent/endpoint), per `LabTech.Models.Computer`.
+ *
+ * There is no flat `ClientId`/`LocationId`: the owning client and location
+ * are nested objects. Online state is the `Status` string, not a boolean.
+ */
+export interface Computer extends BaseEntity {
+  ComputerName: string;
+  FriendlyName?: string;
+  Client?: EntityRef;
+  Location?: EntityRef;
+  Contact?: {
+    Id: number;
+    FirstName?: string;
+    LastName?: string;
+    Email?: string;
+  };
+  /** `Online` or `Offline` */
+  Status?: string;
+  /** `Workstation`, `Server`, ... */
+  Type?: string;
+  MasterMode?: string;
+  OperatingSystemName?: string;
+  OperatingSystemVersion?: string;
+  DomainName?: string;
+  DomainNameServers?: string[];
+  Comment?: string;
+  CommentPriority?: EntityRef;
+  RemoteAgentVersion?: string;
+  RemoteAgentLastContact?: string;
+  RemoteAgentLastInventory?: string;
+  LastInventoryReceived?: string;
+  LastHeartbeat?: string;
+  LastStartup?: string;
+  DateAdded?: string;
+  AssetDate?: string;
+  AssetTag?: string;
+  WarrantyEndDate?: string;
+  WindowsUpdateDate?: string;
+  AntivirusDefinitionDate?: string;
+  VirusScanner?: EntityRef;
+  UTCOffset?: number;
+  TotalMemory?: number;
+  FreeMemory?: number;
+  CpuUsage?: number;
+  SystemUptime?: number;
+  UserIdleTime?: number;
+  LocalIPAddress?: string;
+  GatewayIPAddress?: string;
+  MACAddress?: string;
+  OpenPortsTCP?: number[];
+  OpenPortsUDP?: number[];
+  Bandwidth?: number;
+  BandwidthDisplay?: string;
+  LoggedInUsers?: LoggedInUser[];
+  LastUserName?: string;
+  UserAccounts?: string[];
+  Groups?: EntityRef[];
+  PrimaryContactName?: string;
+  SerialNumber?: string;
+  BiosManufacturer?: string;
+  BiosFlash?: string;
+  TempFiles?: string;
+  PowerProfiles?: string[];
+  CurrentPowerProfile?: string;
+  HardwarePorts?: string[];
+  IRQ?: number[];
+  Address?: number[];
+  DMA?: number[];
+  CpuScore?: number;
+  D3DScore?: number;
+  DiskScore?: number;
+  GraphicsScore?: number;
+  MemoryScore?: number;
+  IsFasTalk?: boolean;
+  IsMaster?: boolean;
+  IsNetworkProbe?: boolean;
+  IsHeartbeatEnabled?: boolean;
+  IsHeartbeatRunning?: boolean;
+  IsMaintenanceModeEnabled?: boolean;
+  IsTunnelSupported?: boolean;
+  IsVirtualMachine?: boolean;
+  IsVirtualHost?: boolean;
+  IsLockedDown?: boolean;
+  IsSystemAccount?: boolean;
+  IsRebootNeeded?: boolean;
+  HasIntelVPRO?: boolean;
+  HasIntelAMT?: boolean;
+  HasHPiLO?: boolean;
+}
+
+/**
+ * Computer list parameters.
+ *
+ * `GET /Computers` filters only through `condition`. The convenience fields
+ * below are folded into it (`Client.Id = …`, `Location.Id = …`,
+ * `Status = 'Online'` / `'Offline'`) and AND-ed with any `condition` given.
  */
 export interface ComputerListParams extends BaseListParams {
-  /** Filter by client ID */
+  /** Only computers belonging to this client */
   clientId?: number;
-  /** Filter by location ID */
+  /** Only computers at this location */
   locationId?: number;
-  /** Include offline agents */
-  includeOffline?: boolean;
-  /** Filter by online status */
+  /** `true` for online agents only, `false` for offline only; omit for all */
   isOnline?: boolean;
 }
 
-/**
- * Computer list response
- */
-export interface ComputerListResponse {
-  TotalRecords?: number;
-  Data: Computer[];
-}
-
-/**
- * Computer creation data
- */
-export interface ComputerCreateData {
-  ComputerName: string;
-  ClientId: number;
-  LocationId: number;
-  Comment?: string;
-  AssetTag?: string;
-}
-
-/**
- * Computer update data
- */
-export interface ComputerUpdateData {
-  ComputerName?: string;
-  LocationId?: number;
-  Comment?: string;
-  AssetTag?: string;
-}
+/** `GET /Computers` response */
+export type ComputerListResponse = ListResponse<Computer>;
 
 /**
  * An entry in Automate's command catalog (`GET /Commands`).
@@ -140,7 +148,8 @@ export interface AutomateCommand {
 }
 
 /**
- * Request body for `POST /Computers/{id}/Commandexecute`.
+ * Request body for `POST /Computers/{id}/CommandExecute`
+ * (`LabTech.Models.CommandExecute`).
  *
  * The command travels as a nested object carrying its catalog id, and
  * `Parameters` is a positional array of strings — not a key/value map. Sending
@@ -154,10 +163,16 @@ export interface ComputerCommandRequest {
   Command: Pick<AutomateCommand, 'Id'>;
   /** Positional parameters for the command */
   Parameters?: string[];
+  /** Deliver over the FasTalk channel */
+  Fastalk?: boolean;
 }
 
 /**
- * Response from `POST/GET /Computers/{id}/Commandexecute`.
+ * A command execution row (`POST`/`GET /Computers/{id}/CommandExecute`).
+ *
+ * The row returned by the execute call is also where the outcome lands:
+ * `Status` and `Output` fill in as the agent reports back, and the row can be
+ * re-read by `Id` through the `ids` filter on the GET route.
  *
  * `Status` is free-form text from the server — Automate emits values outside
  * any documented set (`Terminated` among them), so it is deliberately not
@@ -185,27 +200,24 @@ export interface CommandWaitOptions {
 }
 
 /**
- * Terminal outcome of `ComputersResource.executeCommandAndWait()`.
+ * Outcome of `ComputersResource.executeCommandAndWait()`.
  */
 export interface CommandRunResult {
-  /** Whether a finished history row was observed before the timeout */
+  /** Whether a terminal status was observed before the timeout */
   completed: boolean;
-  /** The response from the execute call itself */
+  /** The execution row as last observed */
   execution: ComputerCommandExecution;
-  /** The matched history row, when the command finished */
-  history?: CommandHistoryEntry;
-  /** Status text, from history when available */
+  /** Status text of that row */
   status?: string;
-  /** Command output, when the command finished */
+  /** Command output, once the agent has reported it */
   output?: string;
   /** How long polling ran, in milliseconds */
   waitedMs: number;
 }
 
 /**
- * A past command run (`GET /Computers/{id}/Commandhistory`).
+ * A past command run (`GET /Computers/{id}/CommandHistory`).
  *
- * This is the only surface carrying a command's outcome and output.
  * Note that `Parameters` is a single string here, while the execute endpoint
  * uses a string array — the two representations genuinely differ.
  */

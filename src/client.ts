@@ -31,17 +31,16 @@ import { GroupsResource } from './resources/groups.js';
  *   },
  * });
  *
- * // List all computers
- * const computers = await client.computers.list();
+ * // List one page of computers (Automate returns a bare array)
+ * const computers = await client.computers.list({ pageSize: 50 });
  *
  * // Get a specific computer
  * const computer = await client.computers.get(123);
  *
- * // Execute a script
- * await client.scripts.execute({
- *   ScriptId: 456,
- *   ComputerIds: [123],
- * });
+ * // Walk every computer with automatic pagination
+ * for await (const c of client.computers.listAll({ condition: "Status = 'Online'" })) {
+ *   console.log(c.ComputerName);
+ * }
  * ```
  *
  * @example

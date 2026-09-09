@@ -1,11 +1,25 @@
 /**
- * Clients resource operations
+ * Clients (companies) and Locations resources.
+ *
+ * Routes verified against the Automate v1 OpenAPI spec (Company.json and
+ * Computers.json):
+ *
+ *   GET/POST              /Clients
+ *   GET/PUT/PATCH/DELETE  /Clients/{clientId}
+ *   GET/POST              /Locations
+ *   GET/PUT/PATCH/DELETE  /Locations/{locationId}
+ *
+ * List routes return bare arrays and take only the shared list options —
+ * there is no `clientId`, `name` or `includeInactive` query parameter, and
+ * Automate silently ignores unknown parameters. PATCH routes take a JSON
+ * Patch operation array, not a partial entity.
  */
 
 import type { HttpClient } from '../http.js';
 import type { PaginatedIterable } from '../pagination.js';
 import { createPaginatedIterable } from '../pagination.js';
-import { normalizeListResponse } from '../types/common.js';
+import type { QueryParams } from '../params.js';
+import { buildBaseListParams, toPatchOperations } from '../params.js';
 import type {
   Client,
   ClientListParams,
@@ -30,24 +44,19 @@ export class ClientsResource {
   }
 
   /**
-   * List clients with optional filtering
+   * List clients. Filter with `condition`, e.g. `Name like '%acme%'`.
    */
   async list(params?: ClientListParams): Promise<ClientListResponse> {
-    const response = await this.httpClient.request<ClientListResponse | Client[]>('/Clients', {
-      params: this.buildListParams(params),
+    return this.httpClient.request<ClientListResponse>('/Clients', {
+      params: buildBaseListParams(params),
     });
-    return normalizeListResponse(response);
   }
 
   /**
    * List all clients with automatic pagination
    */
   listAll(params?: Omit<ClientListParams, 'pageSize' | 'page'>): PaginatedIterable<Client> {
-    return createPaginatedIterable<Client>(
-      this.httpClient,
-      '/Clients',
-      this.buildListParams(params)
-    );
+    return createPaginatedIterable<Client>(this.httpClient, '/Clients', buildBaseListParams(params));
   }
 
   /**
@@ -68,12 +77,13 @@ export class ClientsResource {
   }
 
   /**
-   * Update an existing client
+   * Update a client. Each defined field is sent as a JSON Patch `replace`
+   * operation, which is what `PATCH /Clients/{id}` accepts.
    */
   async update(id: number, data: ClientUpdateData): Promise<Client> {
     return this.httpClient.request<Client>(`/Clients/${id}`, {
       method: 'PATCH',
-      body: data,
+      body: toPatchOperations(data),
     });
   }
 
@@ -84,26 +94,6 @@ export class ClientsResource {
     await this.httpClient.request<void>(`/Clients/${id}`, {
       method: 'DELETE',
     });
-  }
-
-  /**
-   * Build query parameters from list params
-   */
-  private buildListParams(params?: ClientListParams): Record<string, string | number | boolean | undefined> {
-    if (!params) return {};
-
-    const result: Record<string, string | number | boolean | undefined> = {};
-
-    if (params.pageSize !== undefined) result['pageSize'] = params.pageSize;
-    if (params.page !== undefined) result['page'] = params.page;
-    if (params.condition !== undefined) result['condition'] = params.condition;
-    if (params.includeFields !== undefined) result['includeFields'] = params.includeFields;
-    if (params.orderBy !== undefined) result['orderBy'] = params.orderBy;
-    if (params.expand !== undefined) result['expand'] = params.expand;
-    if (params.includeInactive !== undefined) result['includeInactive'] = params.includeInactive;
-    if (params.name !== undefined) result['name'] = params.name;
-
-    return result;
   }
 }
 
@@ -118,24 +108,20 @@ export class LocationsResource {
   }
 
   /**
-   * List locations with optional filtering
+   * List locations. `clientId` restricts results to one client; anything
+   * else goes through `condition`.
    */
   async list(params?: LocationListParams): Promise<LocationListResponse> {
-    const response = await this.httpClient.request<LocationListResponse | Location[]>('/Locations', {
+    return this.httpClient.request<LocationListResponse>('/Locations', {
       params: this.buildListParams(params),
     });
-    return normalizeListResponse(response);
   }
 
   /**
    * List all locations with automatic pagination
    */
   listAll(params?: Omit<LocationListParams, 'pageSize' | 'page'>): PaginatedIterable<Location> {
-    return createPaginatedIterable<Location>(
-      this.httpClient,
-      '/Locations',
-      this.buildListParams(params)
-    );
+    return createPaginatedIterable<Location>(this.httpClient, '/Locations', this.buildListParams(params));
   }
 
   /**
@@ -146,7 +132,7 @@ export class LocationsResource {
   }
 
   /**
-   * Create a new location
+   * Create a new location under `data.Client.Id`
    */
   async create(data: LocationCreateData): Promise<Location> {
     return this.httpClient.request<Location>('/Locations', {
@@ -156,12 +142,13 @@ export class LocationsResource {
   }
 
   /**
-   * Update an existing location
+   * Update a location. Each defined field is sent as a JSON Patch `replace`
+   * operation, which is what `PATCH /Locations/{id}` accepts.
    */
   async update(id: number, data: LocationUpdateData): Promise<Location> {
     return this.httpClient.request<Location>(`/Locations/${id}`, {
       method: 'PATCH',
-      body: data,
+      body: toPatchOperations(data),
     });
   }
 
@@ -175,21 +162,15 @@ export class LocationsResource {
   }
 
   /**
-   * Build query parameters from list params
+   * Map list params onto the query string. Automate has no `clientId`
+   * parameter on `/Locations`, so it becomes a `Client.Id = N` condition.
    */
-  private buildListParams(params?: LocationListParams): Record<string, string | number | boolean | undefined> {
-    if (!params) return {};
-
-    const result: Record<string, string | number | boolean | undefined> = {};
-
-    if (params.pageSize !== undefined) result['pageSize'] = params.pageSize;
-    if (params.page !== undefined) result['page'] = params.page;
-    if (params.condition !== undefined) result['condition'] = params.condition;
-    if (params.includeFields !== undefined) result['includeFields'] = params.includeFields;
-    if (params.orderBy !== undefined) result['orderBy'] = params.orderBy;
-    if (params.expand !== undefined) result['expand'] = params.expand;
-    if (params.clientId !== undefined) result['clientId'] = params.clientId;
-
-    return result;
+  private buildListParams(params?: LocationListParams): QueryParams {
+    const query = buildBaseListParams(params);
+    if (params?.clientId !== undefined) {
+      const clause = `Client.Id = ${params.clientId}`;
+      query['condition'] = params.condition ? `(${params.condition}) and (${clause})` : clause;
+    }
+    return query;
   }
 }
